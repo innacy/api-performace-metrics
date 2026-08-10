@@ -3,3 +3,4 @@ apiperf
 *.db-wal
 *.db-shm
 .playwright-mcp/*
+node_modules/*

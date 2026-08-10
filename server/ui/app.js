@@ -5,6 +5,17 @@ const fmtUs = (us) => us >= 1e6 ? (us / 1e6).toFixed(2) + 's' : us >= 1000 ? (us
 const state = { runId: null, external: false, plan: [], summaries: [] };
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
+// Theme toggle: persisted in localStorage, defaults to light
+function applyTheme(theme) {
+  document.documentElement.classList.toggle('dark', theme === 'dark');
+  document.querySelectorAll('#theme-toggle button').forEach(b =>
+    b.classList.toggle('active', b.dataset.theme === theme));
+  localStorage.setItem('apiperf-theme', theme);
+}
+applyTheme(localStorage.getItem('apiperf-theme') || 'light');
+document.querySelectorAll('#theme-toggle button').forEach(b =>
+  b.onclick = () => applyTheme(b.dataset.theme));
+
 function show(view) {
   for (const v of ['setup', 'live', 'report', 'history']) $('#view-' + v).classList.toggle('hidden', v !== view);
 }
@@ -228,13 +239,73 @@ function summaryTableHTML(d) {
     `</tbody></table>`;
 }
 
-function plot(el, title, opts, data) {
+function chartColors() {
+  const s = getComputedStyle(document.documentElement);
+  return {
+    grid: s.getPropertyValue('--chart-grid').trim(),
+    axis: s.getPropertyValue('--chart-axis').trim(),
+    fg:   s.getPropertyValue('--fg').trim(),
+    muted:s.getPropertyValue('--muted').trim(),
+    c1:   s.getPropertyValue('--c1').trim(),  c1f: s.getPropertyValue('--c1f').trim(),
+    c2:   s.getPropertyValue('--c2').trim(),  c2f: s.getPropertyValue('--c2f').trim(),
+    c3:   s.getPropertyValue('--c3').trim(),  c3f: s.getPropertyValue('--c3f').trim(),
+    c4:   s.getPropertyValue('--c4').trim(),  c4f: s.getPropertyValue('--c4f').trim(),
+    bar1: s.getPropertyValue('--bar1').trim(), bar2: s.getPropertyValue('--bar2').trim(),
+    bar3: s.getPropertyValue('--bar3').trim(), bar4: s.getPropertyValue('--bar4').trim(),
+  };
+}
+
+function gradientFill(color) {
+  return (u, seriesIdx) => {
+    const top = u.valToPos(u.scales.y.max, 'y', true);
+    const bot = u.valToPos(u.scales.y.min, 'y', true);
+    if (!isFinite(top) || !isFinite(bot) || top === bot) return color;
+    const ctx = u.ctx;
+    const grad = ctx.createLinearGradient(0, top, 0, bot);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, 'transparent');
+    return grad;
+  };
+}
+
+function modernSeries(raw) {
+  const cc = chartColors();
+  const palette = [[cc.c2, cc.c2f], [cc.c4, cc.c4f], [cc.c1, cc.c1f], [cc.c3, cc.c3f]];
+  return raw.map((s, i) => {
+    if (i === 0) return s;
+    const [stroke, fill] = palette[(i - 1) % palette.length];
+    return {
+      ...s,
+      stroke: s.stroke || stroke,
+      width: s.width != null ? s.width : 2,
+      fill: s.fill !== undefined ? s.fill : gradientFill(fill),
+      points: s.points || { show: true, size: 5, fill: s.stroke || stroke, stroke: s.stroke || stroke },
+    };
+  });
+}
+
+function modernAxes() {
+  const cc = chartColors();
+  return [
+    { stroke: cc.axis, grid: { stroke: cc.grid, width: 1 }, ticks: { stroke: cc.grid, width: 1 }, font: '11px system-ui', labelFont: '11px system-ui' },
+    { stroke: cc.axis, grid: { stroke: cc.grid, width: 1 }, ticks: { stroke: cc.grid, width: 1 }, font: '11px system-ui', labelFont: '11px system-ui', size: 50 },
+  ];
+}
+
+function plot(el, title, opts, data, extra) {
   const div = document.createElement('div');
-  div.className = 'chart';
+  div.className = extra?.fullWidth ? 'chart chart-full' : 'chart';
   div.innerHTML = `<h2>${title}</h2>`;
   el.appendChild(div);
-  new uPlot({ width: Math.min(1000, el.clientWidth || 1000), height: 260,
-    series: opts.series, axes: opts.axes || [], scales: opts.scales || {} }, data, div);
+  const pad = parseFloat(getComputedStyle(div).paddingLeft) + parseFloat(getComputedStyle(div).paddingRight);
+  const w = div.clientWidth ? div.clientWidth - pad : (el.clientWidth ? Math.floor((el.clientWidth - 32) / 2) : 600);
+  new uPlot({
+    width: w, height: extra?.height || 240,
+    series: modernSeries(opts.series),
+    axes: opts.axes || modernAxes(),
+    scales: opts.scales || {},
+    cursor: { drag: { x: true, y: false } },
+  }, data, div);
 }
 
 async function renderReport(d) {
@@ -242,6 +313,10 @@ async function renderReport(d) {
   el.innerHTML = `<h2>Run ${d.id} — ${d.status}</h2>
     <div class="card"><code class="muted">${esc(d.curl)}</code></div>
     <div class="card">${verdictHTML(d)}</div>` + summaryTableHTML(d);
+
+  const grid = document.createElement('div');
+  grid.className = 'chart-grid';
+  el.appendChild(grid);
 
   // Cross-stage charts: x = concurrency, y = latency or throughput.
   // uPlot requires x-values to be sorted ascending and deduplicated. When
@@ -266,22 +341,21 @@ async function renderReport(d) {
   const CONC_SCALE = { scales: { x: { time: false, range: [0, maxPlanConc] } } };
   const REQ_SCALE  = { scales: { x: { time: false, range: [0, maxPlanReq]  } } };
   if (deduped.length > 1) {
-    plot(el, 'Latency vs concurrency', {
+    plot(grid, 'Latency vs concurrency', {
       series: [{ label: 'concurrency' },
-        { label: 'p50 ms', stroke: '#16a34a', value: (u, v) => v?.toFixed(1) },
-        { label: 'p99 ms', stroke: '#dc2626', value: (u, v) => v?.toFixed(1) }],
+        { label: 'p50', value: (u, v) => v != null ? v.toFixed(1) + ' ms' : '—' },
+        { label: 'p99', value: (u, v) => v != null ? v.toFixed(1) + ' ms' : '—' }],
       ...CONC_SCALE,
     }, [deduped.map(s => s.concurrency),
         deduped.map(s => s.p50Us / 1000),
         deduped.map(s => s.p99Us / 1000)]);
-    plot(el, 'Throughput vs concurrency (req/s)', {
-      series: [{ label: 'concurrency' }, { label: 'req/s', stroke: '#2563eb' }],
+    plot(grid, 'Throughput vs concurrency', {
+      series: [{ label: 'concurrency' },
+        { label: 'req/s', value: (u, v) => v != null ? v.toFixed(0) + ' req/s' : '—' }],
       ...CONC_SCALE,
     }, [deduped.map(s => s.concurrency), deduped.map(s => s.rps)]);
   }
 
-  // Same cross-stage view keyed by number of requests so the user can see
-  // how latency and throughput scale with request volume.
   const byReq = [...d.summaries].sort((a, b) => a.requests - b.requests);
   const dedupReq = [];
   for (const s of byReq) {
@@ -293,55 +367,148 @@ async function renderReport(d) {
     }
   }
   if (dedupReq.length > 1) {
-    plot(el, 'Latency vs requests', {
+    plot(grid, 'Latency vs requests', {
       series: [{ label: 'requests' },
-        { label: 'p50 ms', stroke: '#16a34a', value: (u, v) => v?.toFixed(1) },
-        { label: 'p99 ms', stroke: '#dc2626', value: (u, v) => v?.toFixed(1) }],
+        { label: 'p50', value: (u, v) => v != null ? v.toFixed(1) + ' ms' : '—' },
+        { label: 'p99', value: (u, v) => v != null ? v.toFixed(1) + ' ms' : '—' }],
       ...REQ_SCALE,
     }, [dedupReq.map(s => s.requests),
         dedupReq.map(s => s.p50Us / 1000),
         dedupReq.map(s => s.p99Us / 1000)]);
-    plot(el, 'Throughput vs requests (req/s)', {
-      series: [{ label: 'requests' }, { label: 'req/s', stroke: '#2563eb' }],
+    plot(grid, 'Throughput vs requests', {
+      series: [{ label: 'requests' },
+        { label: 'req/s', value: (u, v) => v != null ? v.toFixed(0) + ' req/s' : '—' }],
       ...REQ_SCALE,
     }, [dedupReq.map(s => s.requests), dedupReq.map(s => s.rps)]);
   }
 
-  // per-stage detail charts
-  for (const s of d.summaries) {
-    try {
-      const [seriesRes, histRes] = await Promise.all([
-        fetch(`/api/runs/${d.id}/series?stage=${s.stage}`),
-        fetch(`/api/runs/${d.id}/hist?stage=${s.stage}`),
-      ]);
-      const [series, hist] = await Promise.all([seriesRes.json(), histRes.json()]);
-      if (series && series.length) {
-        // x = real wall-clock time (stage start + elapsed offset), in Unix
-        // seconds — uPlot's time-scale default is correct and wanted here,
-        // so the axis shows actual calendar date/time, not just "seconds
-        // since stage start", letting a run be correlated against external
-        // events (logs, alerts) by clock time.
-        plot(el, `Stage ${s.stage + 1} — latency over time`, {
-          series: [{ label: 'time' },
-            { label: 'avg ms', stroke: '#2563eb', value: (u, v) => v?.toFixed(1) },
-            { label: 'max ms', stroke: '#dc2626', value: (u, v) => v?.toFixed(1) }],
-        }, [series.map(p => (s.startedAtMs + p.offsetMs) / 1000),
-            series.map(p => p.avgUs / 1000),
-            series.map(p => p.maxUs / 1000)]);
+  // === Unified cross-stage charts ===
+  const stageCount = d.summaries.length;
+  const seriesPromises = d.summaries.map(s =>
+    fetch(`/api/runs/${d.id}/series?stage=${s.stage}`).then(r => r.json()).catch(() => [])
+  );
+  const errorPromises = d.summaries.map(s =>
+    fetch(`/api/runs/${d.id}/errors?stage=${s.stage}`).then(r => r.json()).catch(() => [])
+  );
+  const [allSeries, allErrors] = await Promise.all([
+    Promise.all(seriesPromises),
+    Promise.all(errorPromises),
+  ]);
+
+  // Chart 1: Combined latency over time (wall-clock timeline, all stages)
+  {
+    const cc = chartColors();
+    const palette = [[cc.c2, cc.c2f], [cc.c1, cc.c1f], [cc.c3, cc.c3f], [cc.c4, cc.c4f]];
+    const combinedX = [];
+    const stageY = d.summaries.map(() => []);
+
+    for (let si = 0; si < stageCount; si++) {
+      const pts = allSeries[si];
+      const s = d.summaries[si];
+      if (!pts || !pts.length) continue;
+      for (const p of pts) {
+        combinedX.push((s.startedAtMs + p.offsetMs) / 1000);
+        for (let sj = 0; sj < stageCount; sj++)
+          stageY[sj].push(sj === si ? p.avgUs / 1000 : null);
       }
-      if (hist && hist.length) {
-        plot(el, `Stage ${s.stage + 1} — latency distribution`, {
-          series: [{ label: 'latency ms' },
-            { label: 'count', stroke: '#2563eb', paths: uPlot.paths.bars ? uPlot.paths.bars({ size: [0.9] }) : undefined }],
-          scales: { x: { time: false } },
-        }, [hist.map(b => b.fromUs / 1000), hist.map(b => b.count)]);
-      }
-    } catch (e) {
-      const p = document.createElement('p');
-      p.className = 'bad';
-      p.textContent = `Stage ${s.stage + 1} — charts unavailable: ${e.message}`;
-      el.appendChild(p);
     }
+
+    if (combinedX.length) {
+      const seriesDefs = [{ label: 'time' }];
+      for (let si = 0; si < stageCount; si++) {
+        const [stroke, fill] = palette[si % palette.length];
+        seriesDefs.push({
+          label: `Stage ${d.summaries[si].stage + 1}`,
+          stroke, fill: gradientFill(fill), width: 2,
+          value: (u, v) => v != null ? v.toFixed(1) + ' ms' : '—',
+          points: { show: false },
+        });
+      }
+      plot(grid, 'Latency over time — all stages', { series: seriesDefs },
+        [combinedX, ...stageY]);
+    }
+  }
+
+  // Chart 2: Combined error timeline (wall-clock, skip if zero errors everywhere)
+  {
+    const totalErrors = allErrors.reduce((sum, pts) =>
+      sum + (pts || []).reduce((s, p) => s + p.errors, 0), 0);
+
+    if (totalErrors > 0) {
+      const cc = chartColors();
+      const palette = [[cc.c4, cc.c4f], [cc.c3, cc.c3f], [cc.c1, cc.c1f], [cc.c2, cc.c2f]];
+      const combinedX = [];
+      const stageY = d.summaries.map(() => []);
+
+      for (let si = 0; si < stageCount; si++) {
+        const pts = allErrors[si];
+        const s = d.summaries[si];
+        if (!pts || !pts.length) continue;
+        for (const p of pts) {
+          combinedX.push((s.startedAtMs + p.offsetMs) / 1000);
+          for (let sj = 0; sj < stageCount; sj++)
+            stageY[sj].push(sj === si ? p.errors : null);
+        }
+      }
+
+      if (combinedX.length) {
+        const seriesDefs = [{ label: 'time' }];
+        for (let si = 0; si < stageCount; si++) {
+          const [stroke, fill] = palette[si % palette.length];
+          seriesDefs.push({
+            label: `Stage ${d.summaries[si].stage + 1}`,
+            stroke, fill: gradientFill(fill), width: 2,
+            value: (u, v) => v != null ? v.toFixed(0) + ' errors' : '—',
+            points: { show: false },
+          });
+        }
+        plot(grid, 'Error timeline — all stages', {
+          series: seriesDefs,
+          scales: { y: { min: 0 } },
+        }, [combinedX, ...stageY]);
+      }
+    }
+  }
+
+  // Chart 3: Percentile comparison across stages (full-width nested bar chart)
+  // Draws p99 widest in back, then p95, p90, p50 narrowest in front.
+  if (stageCount > 0) {
+    const cc = chartColors();
+    const barFn = (sz) => uPlot.paths.bars({ size: [sz], radius: 2 });
+    const valFmt = (u, v) => v != null ? v.toFixed(1) + ' ms' : '—';
+    const mAxes = modernAxes();
+
+    const pDiv = document.createElement('div');
+    pDiv.className = 'chart chart-full';
+    pDiv.innerHTML = '<h2>Percentile comparison across stages</h2>';
+    grid.appendChild(pDiv);
+    const pPad = parseFloat(getComputedStyle(pDiv).paddingLeft) + parseFloat(getComputedStyle(pDiv).paddingRight);
+    const pW = pDiv.clientWidth - pPad;
+
+    new uPlot({
+      width: pW, height: 280,
+      series: [
+        {},
+        { label: 'p99', stroke: cc.bar4, fill: cc.bar4, width: 0, paths: barFn(0.65), points: { show: false }, value: valFmt },
+        { label: 'p95', stroke: cc.bar3, fill: cc.bar3, width: 0, paths: barFn(0.50), points: { show: false }, value: valFmt },
+        { label: 'p90', stroke: cc.bar1, fill: cc.bar1, width: 0, paths: barFn(0.35), points: { show: false }, value: valFmt },
+        { label: 'p50', stroke: cc.bar2, fill: cc.bar2, width: 0, paths: barFn(0.20), points: { show: false }, value: valFmt },
+      ],
+      scales: { x: { time: false, range: [0.3, stageCount + 0.7] } },
+      axes: [
+        { ...mAxes[0],
+          splits: () => Array.from({ length: stageCount }, (_, i) => i + 1),
+          values: (u, vals) => vals.map(v => `Stage ${v}`),
+        },
+        mAxes[1],
+      ],
+    }, [
+      d.summaries.map((_, i) => i + 1),
+      d.summaries.map(s => s.p99Us / 1000),
+      d.summaries.map(s => s.p95Us / 1000),
+      d.summaries.map(s => s.p90Us / 1000),
+      d.summaries.map(s => s.p50Us / 1000),
+    ], pDiv);
   }
 }
 async function loadHistory() {

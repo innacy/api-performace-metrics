@@ -134,6 +134,7 @@ func New(st *store.Store, o *orch.Orchestrator, hub *Hub) http.Handler {
 	mux.HandleFunc("GET /api/runs", s.handleListRuns)
 	mux.HandleFunc("GET /api/runs/{id}", s.handleGetRun)
 	mux.HandleFunc("GET /api/runs/{id}/series", s.handleSeries)
+	mux.HandleFunc("GET /api/runs/{id}/errors", s.handleErrorSeries)
 	mux.HandleFunc("GET /api/runs/{id}/hist", s.handleHist)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
@@ -360,6 +361,25 @@ func (s *server) handleSeries(w http.ResponseWriter, r *http.Request) {
 	pts, err := s.st.Series(runID, stage, seriesBuckets)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to compute series: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, pts)
+}
+
+func (s *server) handleErrorSeries(w http.ResponseWriter, r *http.Request) {
+	runID, ok := pathInt64(r, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid run id")
+		return
+	}
+	stage, ok := parseStageParam(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid stage parameter")
+		return
+	}
+	pts, err := s.st.ErrorSeries(runID, stage, seriesBuckets)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to compute error series: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, pts)

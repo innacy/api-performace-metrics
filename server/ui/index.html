@@ -6,29 +6,67 @@
 <title>API Benchmark</title>
 <link rel="stylesheet" href="uPlot.min.css">
 <style>
-  :root { --bg:#fff; --fg:#111; --muted:#667; --card:#f5f6f8; --accent:#2563eb; --bad:#dc2626; --good:#16a34a; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#0f1115; --fg:#e5e7eb; --muted:#9aa; --card:#1a1d24; --accent:#3b82f6; }
+  :root {
+    --bg:#fafbfc; --fg:#1a1a2e; --muted:#6b7280; --card:#fff; --accent:#6366f1;
+    --bad:#ef4444; --good:#10b981; --border:#e5e7eb;
+    --chart-grid:rgba(0,0,0,.06); --chart-axis:#d1d5db;
+    --c1:#6366f1; --c1f:rgba(99,102,241,.12); --c2:#10b981; --c2f:rgba(16,185,129,.10);
+    --c3:#f59e0b; --c3f:rgba(245,158,11,.10); --c4:#ef4444; --c4f:rgba(239,68,68,.10);
+    --bar1:#a5b4fc; --bar2:#86efac; --bar3:#fcd34d; --bar4:#fca5a5;
   }
-  body { margin:0 auto; max-width:1100px; padding:1.5rem; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
-  h1 { font-size:1.3rem } h2 { font-size:1.05rem; margin:1.2rem 0 .5rem }
-  textarea { width:100%; min-height:90px; font:13px/1.4 ui-monospace,monospace; background:var(--card); color:var(--fg); border:1px solid var(--muted); border-radius:6px; padding:.6rem; box-sizing:border-box }
-  table { border-collapse:collapse; width:100% } td,th { padding:.35rem .6rem; text-align:right; border-bottom:1px solid var(--card) } th:first-child,td:first-child { text-align:left }
-  input[type=number] { width:7rem; background:var(--card); color:var(--fg); border:1px solid var(--muted); border-radius:4px; padding:.2rem .4rem }
-  button { border:0; border-radius:6px; padding:.5rem 1rem; font-weight:600; cursor:pointer; background:var(--accent); color:#fff }
-  button.danger { background:var(--bad) } button.ghost { background:var(--card); color:var(--fg) }
-  button:disabled { opacity:.4; cursor:default }
-  .card { background:var(--card); border-radius:8px; padding:1rem; margin:.8rem 0 }
+  html.dark {
+    --bg:#0b0d13; --fg:#e2e8f0; --muted:#94a3b8; --card:#141720; --accent:#818cf8;
+    --bad:#f87171; --good:#34d399; --border:#1e2433;
+    --chart-grid:rgba(255,255,255,.06); --chart-axis:#334155;
+    --c1:#818cf8; --c1f:rgba(129,140,248,.15); --c2:#34d399; --c2f:rgba(52,211,153,.12);
+    --c3:#fbbf24; --c3f:rgba(251,191,36,.12); --c4:#f87171; --c4f:rgba(248,113,113,.12);
+    --bar1:#6366f1; --bar2:#34d399; --bar3:#fbbf24; --bar4:#f87171;
+  }
+  * { box-sizing:border-box }
+  body { margin:0 auto; max-width:1400px; padding:1.5rem 2rem; font:14px/1.6 'Inter',system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg); }
+  h1 { font-size:1.25rem; font-weight:700; letter-spacing:-.02em }
+  h2 { font-size:.875rem; font-weight:600; margin:1rem 0 .4rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted) }
+  textarea { width:100%; min-height:80px; font:13px/1.4 'JetBrains Mono',ui-monospace,monospace; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:.7rem; resize:vertical; transition:border-color .15s }
+  textarea:focus { outline:none; border-color:var(--accent) }
+  table { border-collapse:collapse; width:100%; font-size:13px }
+  td,th { padding:.45rem .7rem; text-align:right; border-bottom:1px solid var(--border) }
+  th { font-weight:600; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.03em }
+  th:first-child,td:first-child { text-align:left }
+  input[type=number] { width:7rem; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:.3rem .5rem; font-size:13px; transition:border-color .15s }
+  input[type=number]:focus { outline:none; border-color:var(--accent) }
+  button { border:0; border-radius:8px; padding:.5rem 1.1rem; font-weight:600; font-size:13px; cursor:pointer; background:var(--accent); color:#fff; transition:opacity .15s, transform .1s }
+  button:hover:not(:disabled) { opacity:.9 } button:active:not(:disabled) { transform:scale(.97) }
+  button.danger { background:var(--bad) } button.ghost { background:var(--card); color:var(--fg); border:1px solid var(--border) }
+  button:disabled { opacity:.35; cursor:default }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; margin:.7rem 0 }
   .muted { color:var(--muted) } .bad { color:var(--bad) } .good { color:var(--good) }
   .hidden { display:none }
-  nav { display:flex; gap:1rem; margin-bottom:1rem } nav a { color:var(--accent); cursor:pointer; text-decoration:none }
-  .chart { margin:.8rem 0; overflow-x:auto }
+  .top-bar { display:flex; align-items:center; justify-content:space-between; margin-bottom:.8rem; padding-bottom:.8rem; border-bottom:1px solid var(--border) }
+  .top-bar nav { margin-bottom:0 }
+  nav { display:flex; gap:1.2rem } nav a { color:var(--accent); cursor:pointer; text-decoration:none; font-weight:500; font-size:13px; transition:opacity .15s } nav a:hover { opacity:.7 }
+  .theme-toggle { display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:3px }
+  .theme-toggle button { padding:.25rem .65rem; font-size:12px; font-weight:500; border-radius:6px; background:transparent; color:var(--muted); transition:all .15s }
+  .theme-toggle button.active { background:var(--accent); color:#fff; box-shadow:0 1px 3px rgba(0,0,0,.15) }
+  .chart-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem }
+  .chart-grid .chart { margin:0 }
+  .chart-grid .chart-full { grid-column:1/-1 }
+  .chart { margin:.8rem 0; overflow-x:auto; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:.8rem 1rem 0.4rem }
+  .chart h2 { margin:0 0 .3rem; font-size:.8rem; color:var(--fg); text-transform:none; letter-spacing:0; font-weight:600 }
+  .chart .u-legend { font-size:11px !important }
+  .chart .u-legend .u-label { font-weight:500 }
   #warn-external { border:1px solid var(--bad) }
+  @media (max-width:800px) { .chart-grid { grid-template-columns:1fr } }
 </style>
 </head>
 <body>
-<h1>API Benchmark</h1>
-<nav><a data-view="setup">New run</a><a data-view="history">History</a></nav>
+<div class="top-bar">
+  <div><h1 style="margin:0">API Benchmark</h1>
+  <nav><a data-view="setup">New run</a><a data-view="history">History</a></nav></div>
+  <div class="theme-toggle" id="theme-toggle">
+    <button data-theme="light">Light</button>
+    <button data-theme="dark">Dark</button>
+  </div>
+</div>
 
 <section id="view-setup">
   <h2>1. Paste your curl</h2>

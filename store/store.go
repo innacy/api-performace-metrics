@@ -267,6 +267,37 @@ func (s *Store) Series(runID int64, stage, buckets int) ([]SeriesPoint, error) {
 	return pts, rows.Err()
 }
 
+// ErrorSeriesPoint is one bucket of a time-bucketed error count series.
+type ErrorSeriesPoint struct {
+	OffsetMs int64 `json:"offsetMs"`
+	Errors   int64 `json:"errors"`
+	Total    int64 `json:"total"`
+}
+
+const errorSeriesQ = `
+WITH span AS (SELECT MAX(offset_ms)+1 AS s FROM results WHERE run_id=? AND stage=?)
+SELECT MIN(offset_ms), SUM(CASE WHEN code=0 THEN 1 ELSE 0 END), COUNT(*)
+FROM results, span WHERE run_id=? AND stage=?
+GROUP BY offset_ms * ? / span.s ORDER BY 1`
+
+func (s *Store) ErrorSeries(runID int64, stage, buckets int) ([]ErrorSeriesPoint, error) {
+	rows, err := s.db.Query(errorSeriesQ, runID, stage, runID, stage, buckets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pts []ErrorSeriesPoint
+	for rows.Next() {
+		var p ErrorSeriesPoint
+		if err := rows.Scan(&p.OffsetMs, &p.Errors, &p.Total); err != nil {
+			return nil, err
+		}
+		pts = append(pts, p)
+	}
+	return pts, rows.Err()
+}
+
 // HistBar is one bin of an equal-width latency histogram.
 type HistBar struct {
 	FromUs int64 `json:"fromUs"`
