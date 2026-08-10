@@ -1,4 +1,4 @@
-# apiperf
+# API Benchmark
 
 Paste a curl command, get the full performance story of your API: a staged
 load ramp (100 → 1M requests, rising concurrency), exact p50/p90/p95/p99 per

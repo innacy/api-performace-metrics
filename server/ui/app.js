@@ -243,24 +243,68 @@ async function renderReport(d) {
     <div class="card"><code class="muted">${esc(d.curl)}</code></div>
     <div class="card">${verdictHTML(d)}</div>` + summaryTableHTML(d);
 
-  // latency vs load: x = concurrency per stage, y = p50/p99 (ms).
-  // x is a plan parameter, never a timestamp — uPlot defaults its x-scale to
-  // "time" mode (interprets values as Unix seconds), which without this flag
-  // renders concurrency values like 10/25/50 as dates near 1970-01-01.
-  const NOT_TIME = { scales: { x: { time: false } } };
-  if (d.summaries.length > 1) {
-    plot(el, 'Latency vs load', {
+  // Cross-stage charts: x = concurrency, y = latency or throughput.
+  // uPlot requires x-values to be sorted ascending and deduplicated. When
+  // the user's plan has non-monotonic concurrency (e.g. [5, 10, 20, 1, 1]),
+  // we must sort by concurrency and merge duplicates (keeping the entry
+  // with the most requests — the heaviest-load data point at that level).
+  // The x-axis range is pinned to [0, maxPlanConcurrency] so the chart
+  // always reflects the user's full plan, even for aborted runs.
+  const maxPlanConc = Math.max(...(d.plan || d.summaries).map(s => s.concurrency));
+  const maxPlanReq  = Math.max(...(d.plan || d.summaries).map(s => s.requests));
+  const byConc = [...d.summaries].sort((a, b) => a.concurrency - b.concurrency);
+  const deduped = [];
+  for (const s of byConc) {
+    const prev = deduped[deduped.length - 1];
+    if (prev && prev.concurrency === s.concurrency) {
+      if (s.requests > prev.requests) deduped[deduped.length - 1] = s;
+    } else {
+      deduped.push(s);
+    }
+  }
+
+  const CONC_SCALE = { scales: { x: { time: false, range: [0, maxPlanConc] } } };
+  const REQ_SCALE  = { scales: { x: { time: false, range: [0, maxPlanReq]  } } };
+  if (deduped.length > 1) {
+    plot(el, 'Latency vs concurrency', {
       series: [{ label: 'concurrency' },
         { label: 'p50 ms', stroke: '#16a34a', value: (u, v) => v?.toFixed(1) },
         { label: 'p99 ms', stroke: '#dc2626', value: (u, v) => v?.toFixed(1) }],
-      ...NOT_TIME,
-    }, [d.summaries.map(s => s.concurrency),
-        d.summaries.map(s => s.p50Us / 1000),
-        d.summaries.map(s => s.p99Us / 1000)]);
-    plot(el, 'Throughput per stage (req/s)', {
+      ...CONC_SCALE,
+    }, [deduped.map(s => s.concurrency),
+        deduped.map(s => s.p50Us / 1000),
+        deduped.map(s => s.p99Us / 1000)]);
+    plot(el, 'Throughput vs concurrency (req/s)', {
       series: [{ label: 'concurrency' }, { label: 'req/s', stroke: '#2563eb' }],
-      ...NOT_TIME,
-    }, [d.summaries.map(s => s.concurrency), d.summaries.map(s => s.rps)]);
+      ...CONC_SCALE,
+    }, [deduped.map(s => s.concurrency), deduped.map(s => s.rps)]);
+  }
+
+  // Same cross-stage view keyed by number of requests so the user can see
+  // how latency and throughput scale with request volume.
+  const byReq = [...d.summaries].sort((a, b) => a.requests - b.requests);
+  const dedupReq = [];
+  for (const s of byReq) {
+    const prev = dedupReq[dedupReq.length - 1];
+    if (prev && prev.requests === s.requests) {
+      if (s.concurrency > prev.concurrency) dedupReq[dedupReq.length - 1] = s;
+    } else {
+      dedupReq.push(s);
+    }
+  }
+  if (dedupReq.length > 1) {
+    plot(el, 'Latency vs requests', {
+      series: [{ label: 'requests' },
+        { label: 'p50 ms', stroke: '#16a34a', value: (u, v) => v?.toFixed(1) },
+        { label: 'p99 ms', stroke: '#dc2626', value: (u, v) => v?.toFixed(1) }],
+      ...REQ_SCALE,
+    }, [dedupReq.map(s => s.requests),
+        dedupReq.map(s => s.p50Us / 1000),
+        dedupReq.map(s => s.p99Us / 1000)]);
+    plot(el, 'Throughput vs requests (req/s)', {
+      series: [{ label: 'requests' }, { label: 'req/s', stroke: '#2563eb' }],
+      ...REQ_SCALE,
+    }, [dedupReq.map(s => s.requests), dedupReq.map(s => s.rps)]);
   }
 
   // per-stage detail charts
@@ -289,7 +333,7 @@ async function renderReport(d) {
         plot(el, `Stage ${s.stage + 1} — latency distribution`, {
           series: [{ label: 'latency ms' },
             { label: 'count', stroke: '#2563eb', paths: uPlot.paths.bars ? uPlot.paths.bars({ size: [0.9] }) : undefined }],
-          ...NOT_TIME,
+          scales: { x: { time: false } },
         }, [hist.map(b => b.fromUs / 1000), hist.map(b => b.count)]);
       }
     } catch (e) {
