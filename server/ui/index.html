@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Benchmark</title>
+<link rel="stylesheet" href="uPlot.min.css">
+<style>
+  :root { --bg:#fff; --fg:#111; --muted:#667; --card:#f5f6f8; --accent:#2563eb; --bad:#dc2626; --good:#16a34a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --fg:#e5e7eb; --muted:#9aa; --card:#1a1d24; --accent:#3b82f6; }
+  }
+  body { margin:0 auto; max-width:1100px; padding:1.5rem; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  h1 { font-size:1.3rem } h2 { font-size:1.05rem; margin:1.2rem 0 .5rem }
+  textarea { width:100%; min-height:90px; font:13px/1.4 ui-monospace,monospace; background:var(--card); color:var(--fg); border:1px solid var(--muted); border-radius:6px; padding:.6rem; box-sizing:border-box }
+  table { border-collapse:collapse; width:100% } td,th { padding:.35rem .6rem; text-align:right; border-bottom:1px solid var(--card) } th:first-child,td:first-child { text-align:left }
+  input[type=number] { width:7rem; background:var(--card); color:var(--fg); border:1px solid var(--muted); border-radius:4px; padding:.2rem .4rem }
+  button { border:0; border-radius:6px; padding:.5rem 1rem; font-weight:600; cursor:pointer; background:var(--accent); color:#fff }
+  button.danger { background:var(--bad) } button.ghost { background:var(--card); color:var(--fg) }
+  button:disabled { opacity:.4; cursor:default }
+  .card { background:var(--card); border-radius:8px; padding:1rem; margin:.8rem 0 }
+  .muted { color:var(--muted) } .bad { color:var(--bad) } .good { color:var(--good) }
+  .hidden { display:none }
+  nav { display:flex; gap:1rem; margin-bottom:1rem } nav a { color:var(--accent); cursor:pointer; text-decoration:none }
+  .chart { margin:.8rem 0; overflow-x:auto }
+  #warn-external { border:1px solid var(--bad) }
+</style>
+</head>
+<body>
+<h1>API Benchmark</h1>
+<nav><a data-view="setup">New run</a><a data-view="history">History</a></nav>
+
+<section id="view-setup">
+  <h2>1. Paste your curl</h2>
+  <textarea id="curl" placeholder="curl -X POST http://localhost:8080/api/login -H 'Content-Type: application/json' -d '{...}'"></textarea>
+  <div style="margin:.6rem 0"><button id="btn-verify">Verify</button> <span id="verify-err" class="bad"></span></div>
+
+  <div id="probe-card" class="card hidden">
+    <h2 style="margin-top:0">Verify probe</h2>
+    <div id="probe-body"></div>
+    <div id="warn-external" class="card hidden">
+      ⚠ Target is not a private/local host. Load-testing third-party APIs may violate their terms.
+      <label><input type="checkbox" id="confirm-external"> I own this API / have permission</label>
+    </div>
+    <h2>2. Stage plan</h2>
+    <table id="plan-table">
+      <thead><tr><th>Stage</th><th>Requests</th><th>Concurrency</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <h2>3. Abort rules</h2>
+    <label>Max error rate <input type="number" id="rule-err" step="0.05" min="0" max="1" value="0.5"></label>
+    <label>Max p99 (ms) <input type="number" id="rule-p99" value="5000"></label>
+    <div style="margin-top:.8rem"><button id="btn-start">Start test</button></div>
+  </div>
+</section>
+
+<section id="view-live" class="hidden">
+  <h2>Run in progress <button id="btn-stop" class="danger" style="float:right">■ Stop</button></h2>
+  <table id="live-table">
+    <thead><tr><th>Stage</th><th>Requests</th><th>Conc</th><th>Progress</th><th>RPS</th><th>p50</th><th>p90</th><th>p95</th><th>p99</th><th>Errors</th><th>Status</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div id="live-status" class="muted"></div>
+</section>
+
+<section id="view-report" class="hidden"><div id="report-body"></div></section>
+
+<section id="view-history" class="hidden">
+  <h2>Past runs</h2>
+  <table id="history-table">
+    <thead><tr><th>ID</th><th>When</th><th>Curl</th><th>Status</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<script src="uPlot.iife.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

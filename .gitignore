@@ -1,0 +1,4 @@
+apiperf
+*.db
+*.db-wal
+*.db-shm

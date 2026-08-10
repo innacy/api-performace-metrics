@@ -1,0 +1,9 @@
+- generic [active] [ref=e1]:
+  - heading "API Benchmark" [level=1] [ref=e2]
+  - navigation [ref=e3]:
+    - generic [ref=e4] [cursor=pointer]: New run
+    - generic [ref=e5] [cursor=pointer]: History
+  - generic [ref=e6]:
+    - heading "1. Paste your curl" [level=2] [ref=e7]
+    - 'textbox "curl -X POST http://localhost:8080/api/login -H ''Content-Type: application/json'' -d ''{...}''" [ref=e8]'
+    - button "Verify" [ref=e10] [cursor=pointer]
