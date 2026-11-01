@@ -26,7 +26,7 @@ var uiFS embed.FS
 
 const (
 	probeTimeout  = 10 * time.Second
-	seriesBuckets = 2000
+	seriesBuckets = 60 // per stage; the report draws all stages side by side
 	histogramBins = 60
 )
 
@@ -91,6 +91,9 @@ type pendingRun struct {
 // spawning enough goroutines/connections to OOM the process.
 const maxStageConcurrency = 10000
 
+// maxTimeoutMs caps the per-request timeout a run may ask for.
+const maxTimeoutMs = 120_000
+
 // validatePlan rejects stage plans that would hang or blow up the engine:
 // an empty plan, or any stage with requests/concurrency out of bounds.
 func validatePlan(plan []metrics.Stage) error {
@@ -122,7 +125,13 @@ func New(st *store.Store, o *orch.Orchestrator, hub *Hub) http.Handler {
 
 	mux := http.NewServeMux()
 	ui, _ := fs.Sub(uiFS, "ui")
-	mux.Handle("/", http.FileServer(http.FS(ui)))
+	// Embedded files have no mtime, so browsers can't tell a new build's UI
+	// apart from a cached one: make them revalidate every load.
+	files := http.FileServer(http.FS(ui))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		files.ServeHTTP(w, r)
+	})
 
 	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -134,7 +143,6 @@ func New(st *store.Store, o *orch.Orchestrator, hub *Hub) http.Handler {
 	mux.HandleFunc("GET /api/runs", s.handleListRuns)
 	mux.HandleFunc("GET /api/runs/{id}", s.handleGetRun)
 	mux.HandleFunc("GET /api/runs/{id}/series", s.handleSeries)
-	mux.HandleFunc("GET /api/runs/{id}/errors", s.handleErrorSeries)
 	mux.HandleFunc("GET /api/runs/{id}/hist", s.handleHist)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
@@ -191,6 +199,7 @@ type createRunResponse struct {
 	External bool               `json:"external"`
 	Plan     []metrics.Stage    `json:"plan"`
 	Rules    metrics.AbortRules `json:"rules"`
+	Target   curlparse.Target   `json:"target"`
 }
 
 func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
@@ -218,6 +227,10 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	if req.Rules != nil {
 		rules = *req.Rules
 	}
+	if rules.TimeoutMs < 0 || rules.TimeoutMs > maxTimeoutMs {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("timeoutMs must be between 1 and %d", maxTimeoutMs))
+		return
+	}
 
 	probe := engine.Probe(tgt, probeTimeout)
 	external := !engine.IsPrivateHost(tgt.URL)
@@ -226,6 +239,9 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create run: "+err.Error())
 		return
+	}
+	if err := s.st.SetProbe(runID, probe); err != nil {
+		log.Printf("server: SetProbe run=%d: %v", runID, err) // report just lacks the timing section
 	}
 
 	s.pmu.Lock()
@@ -247,6 +263,7 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		External: external,
 		Plan:     plan,
 		Rules:    rules,
+		Target:   tgt,
 	})
 }
 
@@ -361,25 +378,6 @@ func (s *server) handleSeries(w http.ResponseWriter, r *http.Request) {
 	pts, err := s.st.Series(runID, stage, seriesBuckets)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to compute series: "+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, pts)
-}
-
-func (s *server) handleErrorSeries(w http.ResponseWriter, r *http.Request) {
-	runID, ok := pathInt64(r, "id")
-	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid run id")
-		return
-	}
-	stage, ok := parseStageParam(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid stage parameter")
-		return
-	}
-	pts, err := s.st.ErrorSeries(runID, stage, seriesBuckets)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to compute error series: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, pts)

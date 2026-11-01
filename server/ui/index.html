@@ -4,58 +4,118 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>API Benchmark</title>
-<link rel="stylesheet" href="uPlot.min.css">
 <style>
   :root {
-    --bg:#fafbfc; --fg:#1a1a2e; --muted:#6b7280; --card:#fff; --accent:#6366f1;
-    --bad:#ef4444; --good:#10b981; --border:#e5e7eb;
-    --chart-grid:rgba(0,0,0,.06); --chart-axis:#d1d5db;
-    --c1:#6366f1; --c1f:rgba(99,102,241,.12); --c2:#10b981; --c2f:rgba(16,185,129,.10);
-    --c3:#f59e0b; --c3f:rgba(245,158,11,.10); --c4:#ef4444; --c4f:rgba(239,68,68,.10);
-    --bar1:#a5b4fc; --bar2:#86efac; --bar3:#fcd34d; --bar4:#fca5a5;
+    --bg:#fafbfc; --fg:#1a1a2e; --muted:#6b7280; --card:#fff; --accent:#6366f1; --accent-soft:rgba(99,102,241,.1);
+    --bad:#ef4444; --good:#10b981; --warn:#f59e0b; --border:#e5e7eb; --track:#f1f3f7; --grid:rgba(0,0,0,.06);
+    --p50:#10b981; --p95:#6366f1; --p99:#ef4444; --rps:#c7d2fe; --prev:#cbd5e1; --c4xx:#f59e0b; --cerr:#7f1d1d;
+    --ph-dnsMs:#8b5cf6; --ph-connectMs:#3b82f6; --ph-tlsMs:#f59e0b; --ph-sendMs:#94a3b8; --ph-waitMs:#10b981; --ph-recvMs:#06b6d4;
   }
   html.dark {
-    --bg:#0b0d13; --fg:#e2e8f0; --muted:#94a3b8; --card:#141720; --accent:#818cf8;
-    --bad:#f87171; --good:#34d399; --border:#1e2433;
-    --chart-grid:rgba(255,255,255,.06); --chart-axis:#334155;
-    --c1:#818cf8; --c1f:rgba(129,140,248,.15); --c2:#34d399; --c2f:rgba(52,211,153,.12);
-    --c3:#fbbf24; --c3f:rgba(251,191,36,.12); --c4:#f87171; --c4f:rgba(248,113,113,.12);
-    --bar1:#6366f1; --bar2:#34d399; --bar3:#fbbf24; --bar4:#f87171;
+    --bg:#0b0d13; --fg:#e2e8f0; --muted:#94a3b8; --card:#141720; --accent:#818cf8; --accent-soft:rgba(129,140,248,.14);
+    --bad:#f87171; --good:#34d399; --warn:#fbbf24; --border:#1e2433; --track:#1b2030; --grid:rgba(255,255,255,.07);
+    --p50:#34d399; --p95:#818cf8; --p99:#f87171; --rps:#312e81; --prev:#475569; --cerr:#fca5a5;
   }
   * { box-sizing:border-box }
-  body { margin:0 auto; max-width:1400px; padding:1.5rem 2rem; font:14px/1.6 'Inter',system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg); }
+  body { margin:0 auto; max-width:1200px; padding:1.5rem 2rem 4rem; font:14px/1.55 'Inter',system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg) }
+  @media (max-width:700px) { body { padding:1rem 1rem 4rem } }
   h1 { font-size:1.25rem; font-weight:700; letter-spacing:-.02em }
-  h2 { font-size:.875rem; font-weight:600; margin:1rem 0 .4rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted) }
-  textarea { width:100%; min-height:80px; font:13px/1.4 'JetBrains Mono',ui-monospace,monospace; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:.7rem; resize:vertical; transition:border-color .15s }
-  textarea:focus { outline:none; border-color:var(--accent) }
+  h2 { font-size:.875rem; font-weight:600; margin:1.2rem 0 .4rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted) }
+  textarea { width:100%; min-height:84px; font:13px/1.45 'JetBrains Mono',ui-monospace,monospace; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:.7rem; resize:vertical }
+  textarea:focus, input:focus { outline:2px solid var(--accent-soft); border-color:var(--accent) }
   table { border-collapse:collapse; width:100%; font-size:13px }
   td,th { padding:.45rem .7rem; text-align:right; border-bottom:1px solid var(--border) }
   th { font-weight:600; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.03em }
   th:first-child,td:first-child { text-align:left }
-  input[type=number] { width:7rem; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:.3rem .5rem; font-size:13px; transition:border-color .15s }
-  input[type=number]:focus { outline:none; border-color:var(--accent) }
+  input[type=number] { width:7.5rem; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:.3rem .5rem; font-size:13px }
+  input[type=range] { width:100%; accent-color:var(--accent) }
   button { border:0; border-radius:8px; padding:.5rem 1.1rem; font-weight:600; font-size:13px; cursor:pointer; background:var(--accent); color:#fff; transition:opacity .15s, transform .1s }
   button:hover:not(:disabled) { opacity:.9 } button:active:not(:disabled) { transform:scale(.97) }
   button.danger { background:var(--bad) } button.ghost { background:var(--card); color:var(--fg); border:1px solid var(--border) }
-  button:disabled { opacity:.35; cursor:default }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; margin:.7rem 0 }
+  button.link { background:none; color:var(--accent); padding:.2rem .3rem }
+  button:disabled { opacity:.35; cursor:not-allowed }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1rem 1.1rem; margin:.7rem 0 }
   .muted { color:var(--muted) } .bad { color:var(--bad) } .good { color:var(--good) }
-  .hidden { display:none }
+  .hidden { display:none !important }
   .top-bar { display:flex; align-items:center; justify-content:space-between; margin-bottom:.8rem; padding-bottom:.8rem; border-bottom:1px solid var(--border) }
-  .top-bar nav { margin-bottom:0 }
-  nav { display:flex; gap:1.2rem } nav a { color:var(--accent); cursor:pointer; text-decoration:none; font-weight:500; font-size:13px; transition:opacity .15s } nav a:hover { opacity:.7 }
+  nav { display:flex; gap:1.2rem } nav a { color:var(--accent); cursor:pointer; text-decoration:none; font-weight:500; font-size:13px } nav a:hover { opacity:.7 }
   .theme-toggle { display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:3px }
-  .theme-toggle button { padding:.25rem .65rem; font-size:12px; font-weight:500; border-radius:6px; background:transparent; color:var(--muted); transition:all .15s }
-  .theme-toggle button.active { background:var(--accent); color:#fff; box-shadow:0 1px 3px rgba(0,0,0,.15) }
-  .chart-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem }
-  .chart-grid .chart { margin:0 }
-  .chart-grid .chart-full { grid-column:1/-1 }
-  .chart { margin:.8rem 0; overflow-x:auto; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:.8rem 1rem 0.4rem }
-  .chart h2 { margin:0 0 .3rem; font-size:.8rem; color:var(--fg); text-transform:none; letter-spacing:0; font-weight:600 }
-  .chart .u-legend { font-size:11px !important }
-  .chart .u-legend .u-label { font-weight:500 }
-  #warn-external { border:1px solid var(--bad) }
-  @media (max-width:800px) { .chart-grid { grid-template-columns:1fr } }
+  .theme-toggle button { padding:.25rem .65rem; font-size:12px; font-weight:500; border-radius:6px; background:transparent; color:var(--muted) }
+  .theme-toggle button.active { background:var(--accent); color:#fff }
+  .copy-curl-btn { position:absolute; top:.6rem; right:.6rem; background:var(--card); border:1px solid var(--border); border-radius:6px; padding:.3rem .4rem; cursor:pointer; color:var(--muted) }
+  .copy-curl-btn:hover { color:var(--accent); border-color:var(--accent) }
+  .copy-curl-btn.copied { color:var(--good); border-color:var(--good) }
+  .card code { display:block; white-space:pre-wrap; overflow-wrap:anywhere; padding-right:2.2rem }
+  .pill { display:inline-block; font-size:11px; font-weight:600; padding:.05rem .5rem; border-radius:99px; background:var(--track) }
+  .seg { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; vertical-align:middle }
+  .seg button { border-radius:0; background:var(--card); color:var(--muted); padding:.3rem .8rem; font-size:12px }
+  .seg button.on { background:var(--accent); color:#fff }
+
+  /* New run */
+  .step { display:flex; align-items:center; gap:.6rem; margin:1.6rem 0 .5rem }
+  .step span { width:24px; height:24px; border-radius:50%; background:var(--accent); color:#fff; display:grid; place-items:center; font-size:12px; font-weight:700 }
+  .step h3 { font-size:1rem; margin:0 } .step small { color:var(--muted) }
+  .chips-row { display:flex; gap:.35rem; flex-wrap:wrap; margin:.5rem 0 }
+  .rchip { font-size:12px; padding:.1rem .55rem; border-radius:99px; background:var(--track); color:var(--muted) } .rchip b { color:var(--fg) }
+  .probe-line { display:flex; align-items:center; gap:.8rem; flex-wrap:wrap; margin-top:.7rem; padding-top:.7rem; border-top:1px solid var(--border) }
+  .mini { display:flex; height:8px; width:180px; border-radius:4px; overflow:hidden; background:var(--track) }
+  .presets { display:grid; grid-template-columns:repeat(5,1fr); gap:.6rem } @media (max-width:800px) { .presets { grid-template-columns:1fr 1fr } }
+  .preset { text-align:left; background:var(--card); color:var(--fg); border:1.5px solid var(--border); border-radius:10px; padding:.7rem .8rem; font-weight:400 }
+  .preset b { display:block; font-size:13.5px } .preset small { color:var(--muted); font-size:12px; line-height:1.35; display:block; margin-top:.15rem }
+  .preset.on { border-color:var(--accent); background:var(--accent-soft) }
+  #plan-table { margin-top:.8rem } #plan-table td, #plan-table th { text-align:left; padding:.4rem .5rem }
+  td.num { font-variant-numeric:tabular-nums; color:var(--muted) }
+  .x { background:none; color:var(--muted); padding:.2rem .45rem; font-size:15px } .x:hover:not(:disabled) { color:var(--bad) }
+  .row-actions { display:flex; gap:.5rem; margin-top:.6rem; flex-wrap:wrap }
+  .ramp { gap:.5rem; align-items:center; flex-wrap:wrap; margin-top:.6rem; padding:.6rem .8rem; background:var(--track); border-radius:8px; font-size:13px; display:flex }
+  .ramp input { width:5.5rem }
+  .est { display:grid; grid-template-columns:repeat(3,1fr); gap:.6rem; margin-top:.9rem } @media (max-width:600px) { .est { grid-template-columns:1fr } }
+  .est div { background:var(--track); border-radius:8px; padding:.5rem .75rem } .est b { display:block; font-size:1.1rem; font-variant-numeric:tabular-nums } .est small { color:var(--muted) }
+  .rule { display:grid; grid-template-columns:1fr 220px 110px; gap:1rem; align-items:center; padding:.6rem 0; border-bottom:1px solid var(--border) }
+  .rule:last-child { border-bottom:0 } .rule small { display:block; color:var(--muted); font-size:12px } .rule input[type=number] { width:100% }
+  @media (max-width:700px) { .rule { grid-template-columns:1fr; gap:.3rem } }
+  #warn-external { border:1px solid var(--bad); background:color-mix(in srgb, var(--bad) 7%, var(--card)); border-radius:10px; padding:.8rem 1rem; margin-top:.8rem }
+  .ready { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; margin-top:.9rem }
+
+  /* Probe timing */
+  .pt-stack { display:flex; height:18px; border-radius:5px; overflow:hidden; background:var(--track); margin:.4rem 0 }
+  .pt-wf { display:grid; grid-template-columns:150px 1fr 70px; gap:.3rem .8rem; align-items:center; margin-top:.8rem }
+  .pt-lbl { display:flex; align-items:center; gap:.45rem; font-weight:500 }
+  .pt-dot { width:10px; height:10px; border-radius:3px; flex:none }
+  .pt-track { position:relative; height:12px; background:var(--track); border-radius:4px }
+  .pt-track div { position:absolute; top:0; height:100%; border-radius:4px; min-width:2px }
+  .pt-ms { text-align:right; font-variant-numeric:tabular-nums }
+  .pt-why { grid-column:1/-1; font-size:12px; color:var(--muted); margin:-.2rem 0 .3rem 1.4rem }
+  .pt-pair { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:.8rem }
+  @media (max-width:700px) { .pt-wf { grid-template-columns:110px 1fr 56px } .pt-pair { grid-template-columns:1fr } }
+
+  /* Report */
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:.7rem; margin:.7rem 0 } @media (max-width:800px) { .kpis { grid-template-columns:1fr 1fr } }
+  .kpi { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:.8rem 1rem }
+  .kpi b { display:block; font-size:1.4rem; font-variant-numeric:tabular-nums }
+  .kpi small { color:var(--muted) } .kpi small.bad { color:var(--bad) } .kpi small.good { color:var(--good) }
+  ul.plain { margin:.4rem 0 0; padding-left:1.2rem }
+  .tblwrap { overflow-x:auto }
+  .chips { text-align:left !important }
+  .chip { display:inline-block; font-size:11px; padding:.05rem .4rem; border-radius:4px; margin:.1rem .2rem .1rem 0; background:color-mix(in srgb, var(--good) 18%, transparent); white-space:nowrap }
+  .chip.e { background:color-mix(in srgb, var(--bad) 18%, transparent) }
+  .status { font-size:11px; font-weight:600; padding:.1rem .5rem; border-radius:99px; background:var(--track); text-transform:none; letter-spacing:0 }
+  .s-completed { color:var(--good) } .s-aborted, .s-killed { color:var(--bad) } .s-running { color:var(--accent) }
+  tr.clickable { cursor:pointer } tr.clickable:hover td { background:var(--track) }
+  .curl-cell { max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left !important }
+
+  /* Charts */
+  .chart-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap }
+  .chart-head h3 { font-size:1rem; margin:0 } .chart-head p { margin:.15rem 0 0; color:var(--muted); font-size:12.5px; max-width:560px }
+  .look { font-size:12px; background:var(--track); border-radius:6px; padding:.35rem .6rem; margin:.6rem 0 0; color:var(--muted) } .look b { color:var(--fg) }
+  .ctrls { display:flex; gap:.35rem; flex-wrap:wrap; align-items:center }
+  .tg { border:1px solid var(--border); background:var(--card); color:var(--muted); border-radius:99px; padding:.2rem .7rem; font-size:12px; font-weight:600; display:inline-flex; align-items:center; gap:.35rem }
+  .tg i { width:9px; height:9px; border-radius:2px; display:inline-block } .tg.on { color:var(--fg); border-color:var(--fg) }
+  svg.ch { width:100%; height:auto; display:block; margin-top:.6rem; overflow:visible }
+  svg.ch text { fill:var(--muted); font-size:11px }
+  .legend { display:flex; gap:1rem; font-size:12px; color:var(--muted); margin-top:.4rem; flex-wrap:wrap }
+  .legend i { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:.3rem; vertical-align:-1px }
+  #tip { position:fixed; pointer-events:none; background:var(--fg); color:var(--bg); font-size:12px; padding:.45rem .6rem; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.2); opacity:0; transition:opacity .1s; z-index:9; max-width:280px }
 </style>
 </head>
 <body>
@@ -69,35 +129,65 @@
 </div>
 
 <section id="view-setup">
-  <h2>1. Paste your curl</h2>
-  <textarea id="curl" placeholder="curl -X POST http://localhost:8080/api/login -H 'Content-Type: application/json' -d '{...}'"></textarea>
-  <div style="margin:.6rem 0"><button id="btn-verify">Verify</button> <span id="verify-err" class="bad"></span></div>
+  <div class="step"><span>1</span><h3>What to test</h3><small>paste a curl, we check it once</small></div>
+  <div class="card">
+    <textarea id="curl" placeholder="curl -X POST http://localhost:8080/api/login -H 'Content-Type: application/json' -d '{...}'"></textarea>
+    <div class="chips-row" id="req-chips"></div>
+    <button id="btn-verify">Verify</button> <span id="verify-err" class="bad"></span>
+    <div id="probe-line" class="probe-line hidden"></div>
+    <div id="probe-detail" class="hidden"></div>
+  </div>
 
-  <div id="probe-card" class="card hidden">
-    <h2 style="margin-top:0">Verify probe</h2>
-    <div id="probe-body"></div>
-    <div id="warn-external" class="card hidden">
-      ⚠ Target is not a private/local host. Load-testing third-party APIs may violate their terms.
-      <label><input type="checkbox" id="confirm-external"> I own this API / have permission</label>
+  <div class="step"><span>2</span><h3>How much load</h3><small>start small; you can always run again</small></div>
+  <div class="card">
+    <div class="presets" id="presets"></div>
+    <table id="plan-table"><thead><tr><th>Stage</th><th>Requests</th><th>At once</th><th>Est. time</th><th></th></tr></thead><tbody></tbody></table>
+    <div class="row-actions">
+      <button class="ghost" id="btn-add">+ Add stage</button>
+      <button class="ghost" id="btn-ramp">Generate a ramp…</button>
     </div>
-    <h2>2. Stage plan</h2>
-    <table id="plan-table">
-      <thead><tr><th>Stage</th><th>Requests</th><th>Concurrency</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <h2>3. Abort rules</h2>
-    <label>Max error rate <input type="number" id="rule-err" step="0.05" min="0" max="1" value="0.5"></label>
-    <label>Max p99 (ms) <input type="number" id="rule-p99" value="5000"></label>
-    <div style="margin-top:.8rem"><button id="btn-start">Start test</button></div>
+    <div class="ramp hidden" id="ramp">
+      From <input type="number" id="r-from" value="10" min="1"> to <input type="number" id="r-to" value="500" min="1"> at once,
+      in <input type="number" id="r-n" value="6" min="1" max="20"> stages, <input type="number" id="r-req" value="5000" min="1"> requests each
+      <button id="r-go">Apply</button>
+    </div>
+    <svg class="ch" id="stairs" viewBox="0 0 900 120"></svg>
+    <div class="est">
+      <div><small>Total requests</small><b id="e-total"></b></div>
+      <div><small>Estimated duration</small><b id="e-time"></b><small id="e-time-note"></small></div>
+      <div><small>Stored on disk</small><b id="e-disk"></b><small>every response time is kept</small></div>
+    </div>
+  </div>
+
+  <div class="step"><span>3</span><h3>When to stop early</h3><small>protects your API if it starts failing</small></div>
+  <div class="card">
+    <div style="margin-bottom:.4rem"><span class="seg" id="rule-presets"><button data-v="strict">Strict</button><button data-v="balanced">Balanced</button><button data-v="lenient">Lenient</button></span>
+      <span class="muted" style="font-size:12px;margin-left:.5rem">or fine-tune below</span></div>
+    <div class="rule"><div>Stop if more than <b id="v-err"></b> of requests fail<small>Failures = timeouts, connection errors and 5xx responses. Checked after each stage.</small></div>
+      <input type="range" id="s-err" min="0" max="100" step="1"><input type="number" id="n-err" min="0" max="100"></div>
+    <div class="rule"><div>Stop if the slowest 1% take longer than <b id="v-p99"></b><small>Checked after each stage (p99).</small></div>
+      <input type="range" id="s-p99" min="100" max="10000" step="100"><input type="number" id="n-p99" min="1"></div>
+    <div class="rule"><div>Give each request up to <b id="v-to"></b><small>After this it counts as a timeout (a failure).</small></div>
+      <input type="range" id="s-to" min="1" max="60" step="1"><input type="number" id="n-to" min="1" max="120"></div>
+  </div>
+
+  <div class="step"><span>4</span><h3>Ready</h3></div>
+  <div class="card">
+    <p id="sentence" style="margin:0"></p>
+    <div id="warn-external" class="hidden">
+      ⚠ <b id="warn-host"></b> is not a private/local host. Load-testing third-party APIs may violate their terms.
+      <label style="display:block;margin-top:.4rem"><input type="checkbox" id="confirm-external"> I own this API / have permission</label>
+    </div>
+    <div class="ready"><span class="muted" id="start-hint"></span><button id="btn-start" disabled>Start test ▶</button></div>
   </div>
 </section>
 
 <section id="view-live" class="hidden">
   <h2>Run in progress <button id="btn-stop" class="danger" style="float:right">■ Stop</button></h2>
-  <table id="live-table">
-    <thead><tr><th>Stage</th><th>Requests</th><th>Conc</th><th>Progress</th><th>RPS</th><th>p50</th><th>p90</th><th>p95</th><th>p99</th><th>Errors</th><th>Status</th></tr></thead>
+  <div class="card tblwrap"><table id="live-table">
+    <thead><tr><th>Stage</th><th>Requests</th><th>Conc</th><th>Progress</th><th>RPS</th><th>p50</th><th>p90</th><th>p95</th><th>p99</th><th>Failed</th><th>Status</th></tr></thead>
     <tbody></tbody>
-  </table>
+  </table></div>
   <div id="live-status" class="muted"></div>
 </section>
 
@@ -105,13 +195,13 @@
 
 <section id="view-history" class="hidden">
   <h2>Past runs</h2>
-  <table id="history-table">
-    <thead><tr><th>ID</th><th>When</th><th>Curl</th><th>Status</th></tr></thead>
+  <div class="card tblwrap"><table id="history-table">
+    <thead><tr><th>ID</th><th>When</th><th>Request</th><th>Status</th><th>Stages</th><th>Capacity (req/s)</th><th>p99 at peak</th><th>Result</th></tr></thead>
     <tbody></tbody>
-  </table>
+  </table></div>
 </section>
 
-<script src="uPlot.iife.min.js"></script>
+<div id="tip"></div>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -18,11 +20,14 @@ import (
 )
 
 type ProbeResult struct {
-	Status    int    `json:"status"`
-	LatencyMs int64  `json:"latencyMs"`
-	Bytes     int    `json:"bytes"`
-	Snippet   string `json:"snippet"` // first 512 bytes of body
-	Error     string `json:"error,omitempty"`
+	Status    int     `json:"status"`
+	LatencyMs int64   `json:"latencyMs"`
+	Bytes     int     `json:"bytes"`
+	Snippet   string  `json:"snippet"` // first 512 bytes of body
+	Error     string  `json:"error,omitempty"`
+	Proto     string  `json:"proto,omitempty"`
+	Cold      *Phases `json:"cold,omitempty"` // first request, new connection
+	Warm      *Phases `json:"warm,omitempty"` // repeat on the same connection; nil if it failed
 }
 
 // Run fires exactly n requests at fixed concurrency c (closed loop: rate
@@ -129,38 +134,86 @@ func Run(ctx context.Context, t curlparse.Target, n, c int, timeout time.Duratio
 	return out
 }
 
-// Probe sends ONE real request (plain net/http) and reports what happened.
+// Phases breaks one request's latency into its network steps (ms).
+// Steps skipped on a reused connection (DNS, connect, TLS) stay 0.
+type Phases struct {
+	DNSMs     float64 `json:"dnsMs"`
+	ConnectMs float64 `json:"connectMs"`
+	TLSMs     float64 `json:"tlsMs"`
+	SendMs    float64 `json:"sendMs"`
+	WaitMs    float64 `json:"waitMs"` // server processing: request written → first byte
+	RecvMs    float64 `json:"recvMs"`
+	Reused    bool    `json:"reused"`
+}
+
+// Probe sends one real request on a new connection ("cold"), then repeats
+// it on the same connection ("warm"), timing each step of both.
 func Probe(t curlparse.Target, timeout time.Duration) ProbeResult {
-	client := &http.Client{Timeout: timeout}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	defer tr.CloseIdleConnections()
 	if t.Insecure {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	client := &http.Client{Transport: tr, Timeout: timeout}
 	if !t.FollowRedirects {
 		// Match curl's default: don't follow redirects unless -L was given.
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
 	}
-	req, err := http.NewRequest(t.Method, t.URL, strings.NewReader(string(t.Body)))
-	if err != nil {
-		return ProbeResult{Error: err.Error()}
-	}
-	req.Header = t.Header.Clone()
+
 	start := time.Now()
-	res, err := client.Do(req)
+	res, body, cold, err := timedDo(client, t)
 	if err != nil {
 		return ProbeResult{Error: err.Error(), LatencyMs: time.Since(start).Milliseconds()}
 	}
-	defer res.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
 	snip := body
 	if len(snip) > 512 {
 		snip = snip[:512]
 	}
-	return ProbeResult{
+	p := ProbeResult{
 		Status: res.StatusCode, LatencyMs: time.Since(start).Milliseconds(),
-		Bytes: len(body), Snippet: string(snip),
+		Bytes: len(body), Snippet: string(snip), Proto: res.Proto, Cold: &cold,
 	}
+	if _, _, warm, err := timedDo(client, t); err == nil {
+		p.Warm = &warm
+	}
+	return p
+}
+
+// timedDo performs one request with an httptrace hooked in. It returns the
+// first 64KB of the body; the rest is drained so the connection can be reused.
+// ponytail: with -L, phases cover every hop combined (curl's -w does the same).
+func timedDo(client *http.Client, t curlparse.Target) (*http.Response, []byte, Phases, error) {
+	var p Phases
+	var dnsStart, connStart, tlsStart, gotConn, wrote, firstByte time.Time
+	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+	trace := &httptrace.ClientTrace{
+		DNSStart:             func(httptrace.DNSStartInfo) { dnsStart = time.Now() },
+		DNSDone:              func(httptrace.DNSDoneInfo) { p.DNSMs += ms(time.Since(dnsStart)) },
+		ConnectStart:         func(string, string) { connStart = time.Now() },
+		ConnectDone:          func(string, string, error) { p.ConnectMs += ms(time.Since(connStart)) },
+		TLSHandshakeStart:    func() { tlsStart = time.Now() },
+		TLSHandshakeDone:     func(tls.ConnectionState, error) { p.TLSMs += ms(time.Since(tlsStart)) },
+		GotConn:              func(i httptrace.GotConnInfo) { gotConn, p.Reused = time.Now(), i.Reused },
+		WroteRequest:         func(httptrace.WroteRequestInfo) { wrote = time.Now(); p.SendMs += ms(wrote.Sub(gotConn)) },
+		GotFirstResponseByte: func() { firstByte = time.Now(); p.WaitMs += ms(firstByte.Sub(wrote)) },
+	}
+	req, err := http.NewRequest(t.Method, t.URL, bytes.NewReader(t.Body))
+	if err != nil {
+		return nil, nil, p, err
+	}
+	req.Header = t.Header.Clone()
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, nil, p, err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
+	io.Copy(io.Discard, io.LimitReader(res.Body, 10<<20))
+	p.RecvMs = ms(time.Since(firstByte))
+	return res, body, p, nil
 }
 
 // IsPrivateHost reports whether every resolved IP of the URL's host is

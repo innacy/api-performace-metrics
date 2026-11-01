@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Run Mock</title>
+<!-- Static mock: proposed New run page (presets, editable plan with live estimates, plain-language abort rules). Fake probe data. -->
+<style>
+  :root {
+    --bg:#fafbfc; --fg:#1a1a2e; --muted:#6b7280; --card:#fff; --accent:#6366f1; --accent-soft:rgba(99,102,241,.1);
+    --bad:#ef4444; --good:#10b981; --warn:#f59e0b; --border:#e5e7eb; --track:#f1f3f7;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg:#0b0d13; --fg:#e2e8f0; --muted:#94a3b8; --card:#141720; --accent:#818cf8; --accent-soft:rgba(129,140,248,.14);
+    --bad:#f87171; --good:#34d399; --warn:#fbbf24; --border:#1e2433; --track:#1b2030;
+  } }
+  * { box-sizing:border-box }
+  body { margin:0 auto; max-width:980px; padding:1.5rem 2rem 4rem; font:14px/1.55 system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg) }
+  @media (max-width:700px) { body { padding:1rem 1rem 4rem } }
+  h1 { font-size:1.25rem; margin:0 0 1rem }
+  .step { display:flex; align-items:center; gap:.6rem; margin:1.6rem 0 .5rem }
+  .step span { width:24px; height:24px; border-radius:50%; background:var(--accent); color:#fff; display:grid; place-items:center; font-size:12px; font-weight:700 }
+  .step h2 { font-size:1rem; margin:0 } .step small { color:var(--muted) }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1rem 1.1rem }
+  .muted { color:var(--muted) } .good { color:var(--good) } .bad { color:var(--bad) }
+  textarea { width:100%; min-height:84px; font:13px/1.45 ui-monospace,monospace; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:.7rem; resize:vertical }
+  textarea:focus, input:focus { outline:2px solid var(--accent-soft); border-color:var(--accent) }
+  .chips { display:flex; gap:.35rem; flex-wrap:wrap; margin:.5rem 0 }
+  .chip { font-size:12px; padding:.1rem .55rem; border-radius:99px; background:var(--track); color:var(--muted) } .chip b { color:var(--fg) }
+  button { border:0; border-radius:8px; padding:.5rem 1.1rem; font-weight:600; font-size:13px; cursor:pointer; background:var(--accent); color:#fff }
+  button.ghost { background:var(--card); color:var(--fg); border:1px solid var(--border) }
+  button.link { background:none; color:var(--accent); padding:.2rem .3rem }
+  button:disabled { opacity:.4; cursor:not-allowed }
+  .probe { display:flex; align-items:center; gap:.8rem; flex-wrap:wrap; margin-top:.7rem; padding-top:.7rem; border-top:1px solid var(--border) }
+  .mini { display:flex; height:8px; width:180px; border-radius:4px; overflow:hidden }
+  .presets { display:grid; grid-template-columns:repeat(5,1fr); gap:.6rem } @media (max-width:800px) { .presets { grid-template-columns:1fr 1fr } }
+  .preset { text-align:left; background:var(--card); color:var(--fg); border:1.5px solid var(--border); border-radius:10px; padding:.7rem .8rem; font-weight:400 }
+  .preset b { display:block; font-size:13.5px } .preset small { color:var(--muted); font-size:12px; line-height:1.35; display:block; margin-top:.15rem }
+  .preset.on { border-color:var(--accent); background:var(--accent-soft) }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin-top:.8rem } td,th { padding:.4rem .5rem; border-bottom:1px solid var(--border); text-align:left }
+  th { font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:600 }
+  td.num { font-variant-numeric:tabular-nums; color:var(--muted) }
+  input[type=number] { width:7.5rem; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:.3rem .5rem; font-size:13px }
+  .x { background:none; color:var(--muted); padding:.2rem .45rem; font-size:15px } .x:hover { color:var(--bad) }
+  .row-actions { display:flex; gap:.5rem; margin-top:.6rem; flex-wrap:wrap; align-items:center }
+  .ramp { display:none; gap:.5rem; align-items:center; flex-wrap:wrap; margin-top:.6rem; padding:.6rem .8rem; background:var(--track); border-radius:8px; font-size:13px }
+  .ramp.open { display:flex } .ramp input { width:5.5rem }
+  .est { display:grid; grid-template-columns:repeat(3,1fr); gap:.6rem; margin-top:.9rem } @media (max-width:600px) { .est { grid-template-columns:1fr } }
+  .est div { background:var(--track); border-radius:8px; padding:.5rem .75rem } .est b { display:block; font-size:1.1rem; font-variant-numeric:tabular-nums } .est small { color:var(--muted) }
+  svg { width:100%; height:auto; display:block; margin-top:.8rem } svg text { fill:var(--muted); font-size:11px }
+  .rule { display:grid; grid-template-columns:1fr 220px 110px; gap:1rem; align-items:center; padding:.6rem 0; border-bottom:1px solid var(--border) }
+  .rule:last-child { border-bottom:0 } .rule small { display:block; color:var(--muted); font-size:12px }
+  @media (max-width:700px) { .rule { grid-template-columns:1fr; gap:.3rem } }
+  input[type=range] { width:100%; accent-color:var(--accent) }
+  .rule input[type=number] { width:100% }
+  .seg { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden } .seg button { border-radius:0; background:var(--card); color:var(--muted); padding:.3rem .8rem; font-size:12px } .seg button.on { background:var(--accent); color:#fff }
+  .warn { border:1px solid var(--bad); background:color-mix(in srgb, var(--bad) 7%, var(--card)); border-radius:10px; padding:.8rem 1rem; margin-top:.8rem }
+  .ready { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap }
+  .pill { display:inline-block; font-size:11px; font-weight:600; padding:.05rem .5rem; border-radius:99px; background:var(--track) }
+</style>
+</head>
+<body>
+<h1>New run <span class="pill">mock</span></h1>
+
+<div class="step"><span>1</span><h2>What to test</h2><small>paste a curl, we check it once</small></div>
+<div class="card">
+  <textarea>curl -X POST https://api.example.internal/v1/orders/search -H 'Content-Type: application/json' -H 'Authorization: Bearer eyJhbGciOi…' -d '{"status":["open"]}'</textarea>
+  <div class="chips">
+    <span class="chip"><b>POST</b></span><span class="chip">host <b>api.example.internal</b></span><span class="chip">path <b>/v1/orders/search</b></span>
+    <span class="chip"><b>2</b> headers (1 auth)</span><span class="chip">JSON body <b>20 B</b></span>
+  </div>
+  <button>Verify</button>
+  <div class="probe">
+    <b class="good">✓ HTTP 200</b><span>412 ms</span><span class="muted">18.4 KB · HTTP/2</span>
+    <div class="mini"><div style="width:3%;background:#8b5cf6"></div><div style="width:6%;background:#3b82f6"></div><div style="width:15%;background:#f59e0b"></div><div style="width:72%;background:#10b981"></div><div style="width:4%;background:#06b6d4"></div></div>
+    <span class="muted">mostly server processing</span><button class="link">step by step ▾</button>
+  </div>
+</div>
+
+<div class="step"><span>2</span><h2>How much load</h2><small>start small; you can always run again</small></div>
+<div class="card">
+  <div class="presets" id="presets"></div>
+  <table><thead><tr><th>Stage</th><th>Requests</th><th>At once</th><th>Est. time</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+  <div class="row-actions">
+    <button class="ghost" id="add">+ Add stage</button>
+    <button class="ghost" id="ramp-btn">Generate a ramp…</button>
+  </div>
+  <div class="ramp" id="ramp">
+    From <input type="number" id="r-from" value="10"> to <input type="number" id="r-to" value="500"> at once,
+    in <input type="number" id="r-n" value="6"> stages, <input type="number" id="r-req" value="5000"> requests each
+    <button id="r-go">Apply</button>
+  </div>
+  <svg id="stairs" viewBox="0 0 900 120"></svg>
+  <div class="est">
+    <div><small>Total requests</small><b id="e-total"></b></div>
+    <div><small>Estimated duration</small><b id="e-time"></b><small>from the 412 ms probe; real time varies</small></div>
+    <div><small>Stored on disk</small><b id="e-disk"></b><small>every response time is kept</small></div>
+  </div>
+</div>
+
+<div class="step"><span>3</span><h2>When to stop early</h2><small>protects your API if it starts failing</small></div>
+<div class="card">
+  <div style="margin-bottom:.4rem"><span class="seg" id="strict"><button data-v="strict">Strict</button><button data-v="balanced" class="on">Balanced</button><button data-v="lenient">Lenient</button></span>
+    <span class="muted" style="font-size:12px;margin-left:.5rem">or fine-tune below</span></div>
+  <div class="rule"><div>Stop if more than <b id="v-err"></b> of requests fail<small>Failures = timeouts, connection errors and 5xx responses.</small></div>
+    <input type="range" id="s-err" min="0" max="50" step="1"><input type="number" id="n-err" min="0" max="100"></div>
+  <div class="rule"><div>Stop if the slowest 1% take longer than <b id="v-p99"></b><small>Checked after each stage (p99).</small></div>
+    <input type="range" id="s-p99" min="100" max="10000" step="100"><input type="number" id="n-p99" min="1"></div>
+  <div class="rule"><div>Give each request up to <b id="v-to"></b> <span class="pill">new</span><small>After this it counts as a timeout. Today this is fixed at 10 s.</small></div>
+    <input type="range" id="s-to" min="1" max="60" step="1"><input type="number" id="n-to" min="1"></div>
+</div>
+
+<div class="step"><span>4</span><h2>Ready</h2></div>
+<div class="card">
+  <p id="sentence" style="margin:0 0 .3rem"></p>
+  <div class="warn">
+    ⚠ <b>api.example.internal</b> is not a private/local host. Load-testing third-party APIs may violate their terms.
+    <label style="display:block;margin-top:.4rem"><input type="checkbox" id="perm"> I own this API / have permission</label>
+  </div>
+  <div class="ready" style="margin-top:.9rem"><span class="muted" id="hint">Tick the permission box to start.</span><button id="start" disabled>Start test ▶</button></div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const PROBE_MS = 412;
+const PRESETS = {
+  smoke:    { name: 'Smoke',     desc: 'Does it work under a little load? Seconds.', plan: [[100, 5]] },
+  quick:    { name: 'Quick',     desc: 'Up to 10k requests. About a minute.', plan: [[100, 10], [1000, 25], [10000, 50]] },
+  standard: { name: 'Standard',  desc: 'Find the breaking point up to 100 at once.', plan: [[100, 10], [1000, 25], [10000, 50], [50000, 100]] },
+  full:     { name: 'Full ramp', desc: 'Up to 1M requests. Long, heavy.', plan: [[100, 10], [1000, 25], [10000, 50], [100000, 100], [1000000, 250]] },
+  custom:   { name: 'Custom',    desc: 'Edit the stages yourself.', plan: null },
+};
+const RULES = { strict: [1, 1000, 5], balanced: [5, 2000, 10], lenient: [50, 5000, 30] };
+let plan = PRESETS.quick.plan.map(([n, c]) => ({ n, c })), preset = 'quick';
+
+const fmtN = (n) => n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(n % 1e3 ? 1 : 0) + 'k' : String(n);
+const fmtT = (s) => s < 60 ? Math.max(1, Math.round(s)) + ' s' : s < 3600 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h';
+const est = (st) => st.n * PROBE_MS / 1000 / st.c; // ponytail: assumes latency stays at probe level; real runs slow down past saturation
+
+function renderPresets() {
+  $('#presets').innerHTML = Object.entries(PRESETS).map(([k, p]) =>
+    `<button class="preset ${k === preset ? 'on' : ''}" data-k="${k}"><b>${p.name}</b><small>${p.desc}</small></button>`).join('');
+}
+$('#presets').onclick = (e) => {
+  const b = e.target.closest('.preset'); if (!b) return;
+  preset = b.dataset.k;
+  if (PRESETS[preset].plan) plan = PRESETS[preset].plan.map(([n, c]) => ({ n, c }));
+  render();
+};
+
+function render() {
+  renderPresets();
+  $('#rows').innerHTML = plan.map((s, i) => `<tr>
+    <td>${i + 1}</td>
+    <td><input type="number" min="1" value="${s.n}" data-i="${i}" data-f="n"></td>
+    <td><input type="number" min="1" max="10000" value="${s.c}" data-i="${i}" data-f="c"></td>
+    <td class="num">${fmtT(est(s))}</td>
+    <td><button class="x" title="Remove stage" data-rm="${i}" ${plan.length < 2 ? 'disabled' : ''}>✕</button></td></tr>`).join('');
+  const total = plan.reduce((a, s) => a + s.n, 0), secs = plan.reduce((a, s) => a + est(s), 0) + 3 * (plan.length - 1);
+  $('#e-total').textContent = total.toLocaleString();
+  $('#e-time').textContent = '~' + fmtT(secs);
+  $('#e-disk').textContent = '~' + Math.max(1, Math.round(total * 40 / 1e6)) + ' MB';
+  drawStairs(secs);
+  renderSentence();
+}
+$('#rows').oninput = (e) => {
+  const i = e.target.dataset.i; if (i == null) return;
+  plan[i][e.target.dataset.f] = Math.max(1, Math.floor(+e.target.value) || 1);
+  preset = 'custom'; renderPresets();
+  const secs = plan.reduce((a, s) => a + est(s), 0);
+  e.target.closest('tr').querySelector('.num').textContent = fmtT(est(plan[i]));
+  $('#e-total').textContent = plan.reduce((a, s) => a + s.n, 0).toLocaleString();
+  $('#e-time').textContent = '~' + fmtT(secs); drawStairs(secs); renderSentence();
+};
+$('#rows').onclick = (e) => { const i = e.target.dataset.rm; if (i == null) return; plan.splice(+i, 1); preset = 'custom'; render(); };
+$('#add').onclick = () => { const l = plan[plan.length - 1]; plan.push({ n: l.n * 2, c: l.c * 2 }); preset = 'custom'; render(); };
+$('#ramp-btn').onclick = () => $('#ramp').classList.toggle('open');
+$('#r-go').onclick = () => {
+  const a = +$('#r-from').value, b = +$('#r-to').value, k = Math.max(1, +$('#r-n').value), n = +$('#r-req').value;
+  plan = Array.from({ length: k }, (_, i) => ({ n, c: Math.round(k === 1 ? b : a * Math.pow(b / a, i / (k - 1))) })); // geometric steps
+  preset = 'custom'; render();
+};
+
+// Staircase: width = estimated time share (min sliver so short stages stay visible), height = concurrency.
+function drawStairs(secs) {
+  const L = 40, R = 890, T = 14, B = 96, maxC = Math.max(...plan.map(s => s.c));
+  const w = plan.map(s => Math.max(.06, est(s) / secs)), sum = w.reduce((a, b) => a + b, 0);
+  let x = L, g = `<text x="${L - 6}" y="${T + 4}" text-anchor="end">${maxC}</text><text x="${L - 6}" y="${B}" text-anchor="end">0</text>`;
+  plan.forEach((s, i) => {
+    const ww = w[i] / sum * (R - L), h = s.c / maxC * (B - T);
+    g += `<rect x="${x + 1}" y="${B - h}" width="${ww - 2}" height="${h}" rx="4" fill="var(--accent)" opacity="${.35 + .65 * (i + 1) / plan.length}"/>`;
+    if (ww > 50) g += `<text x="${x + ww / 2}" y="${B + 16}" text-anchor="middle">${fmtN(s.n)} @ ${s.c}</text>`;
+    x += ww;
+  });
+  $('#stairs').innerHTML = g + `<text x="${R}" y="${T}" text-anchor="end">requests at once, over time →</text>`;
+}
+
+// Abort rules: slider and number stay in sync.
+const R = { err: 5, p99: 2000, to: 10 };
+const fmtRule = { err: (v) => v + '%', p99: (v) => v >= 1000 ? v / 1000 + ' s' : v + ' ms', to: (v) => v + ' s' };
+function syncRules() {
+  for (const k in R) { $('#s-' + k).value = R[k]; $('#n-' + k).value = R[k]; $('#v-' + k).textContent = fmtRule[k](R[k]); }
+  renderSentence();
+}
+for (const k in R) for (const p of ['s', 'n']) $(`#${p}-${k}`).oninput = (e) => {
+  R[k] = +e.target.value; syncRules();
+  document.querySelectorAll('#strict button').forEach(b => b.classList.remove('on'));
+};
+$('#strict').onclick = (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  [R.err, R.p99, R.to] = RULES[b.dataset.v];
+  document.querySelectorAll('#strict button').forEach(x => x.classList.toggle('on', x === b));
+  syncRules();
+};
+
+function renderSentence() {
+  const total = plan.reduce((a, s) => a + s.n, 0), maxC = Math.max(...plan.map(s => s.c));
+  $('#sentence').innerHTML = `We'll send <b>${total.toLocaleString()} requests</b> in <b>${plan.length} stage${plan.length > 1 ? 's' : ''}</b>, up to <b>${maxC} at once</b>,
+    and stop early if more than <b>${R.err}%</b> fail or the slowest 1% exceed <b>${fmtRule.p99(R.p99)}</b>.`;
+}
+$('#perm').onchange = (e) => { $('#start').disabled = !e.target.checked; $('#hint').textContent = e.target.checked ? 'You can stop the test at any time.' : 'Tick the permission box to start.'; };
+
+render(); syncRules();
+</script>
+</body>
+</html>

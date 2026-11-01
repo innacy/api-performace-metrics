@@ -21,8 +21,9 @@ type Stage struct {
 }
 
 type AbortRules struct {
-	MaxErrorRate float64 `json:"maxErrorRate"` // default 0.5
-	MaxP99Ms     int64   `json:"maxP99Ms"`     // default 5000
+	MaxErrorRate float64 `json:"maxErrorRate"`        // default 0.5; compared to FailRate (errors + 5xx)
+	MaxP99Ms     int64   `json:"maxP99Ms"`            // default 5000
+	TimeoutMs    int64   `json:"timeoutMs,omitempty"` // per-request timeout; 0 = orchestrator default
 }
 
 type StageSummary struct {
@@ -42,6 +43,8 @@ type StageSummary struct {
 	Codes        map[string]int `json:"codes"`      // "200": 950
 	ErrorCount   int            `json:"errorCount"` // transport errors + timeouts
 	ErrorRate    float64        `json:"errorRate"`  // errors / total (5xx do NOT count as errors here; they show in Codes)
+	FailCount    int            `json:"failCount"`  // errors + 5xx responses
+	FailRate     float64        `json:"failRate"`   // failCount / total; drives abort + saturation
 	Timeouts     int            `json:"timeouts"`
 	SampleErrors []string       `json:"sampleErrors"` // first 5 distinct error strings
 }
@@ -79,6 +82,7 @@ type StageAcc struct {
 	latencies    []int64
 	codes        map[int]int
 	errs         int
+	fails        int
 	timeouts     int
 	sampleErrors []string
 	seenErrors   map[string]bool
@@ -92,10 +96,14 @@ func (a *StageAcc) Add(s Sample) {
 	a.latencies = append(a.latencies, s.LatencyUs)
 	if s.Code != 0 {
 		a.codes[s.Code]++
+		if s.Code >= 500 {
+			a.fails++
+		}
 		return
 	}
 	// Code == 0: genuine transport failure/timeout, not an HTTP response.
 	a.errs++
+	a.fails++
 	if s.Timeout {
 		a.timeouts++
 	}
@@ -129,7 +137,7 @@ func (a *StageAcc) Summarize(stageIdx int, st Stage, wall time.Duration, started
 	s := StageSummary{
 		Stage: stageIdx, Requests: st.Requests, Concurrency: st.Concurrency,
 		DurationMs: wall.Milliseconds(), StartedAtMs: startedAt.UnixMilli(),
-		Codes:      map[string]int{}, ErrorCount: a.errs, Timeouts: a.timeouts,
+		Codes:      map[string]int{}, ErrorCount: a.errs, FailCount: a.fails, Timeouts: a.timeouts,
 		SampleErrors: a.sampleErrors,
 	}
 	if total > 0 {
@@ -140,6 +148,7 @@ func (a *StageAcc) Summarize(stageIdx int, st Stage, wall time.Duration, started
 		s.P95Us = Percentile(sorted, 0.95)
 		s.P99Us = Percentile(sorted, 0.99)
 		s.ErrorRate = float64(a.errs) / float64(total)
+		s.FailRate = float64(a.fails) / float64(total)
 	}
 	if wall > 0 {
 		s.RPS = float64(total) / wall.Seconds()
@@ -151,8 +160,8 @@ func (a *StageAcc) Summarize(stageIdx int, st Stage, wall time.Duration, started
 }
 
 func ShouldAbort(s StageSummary, r AbortRules) (bool, string) {
-	if s.ErrorRate > r.MaxErrorRate {
-		return true, fmt.Sprintf("error rate %.0f%% exceeds %.0f%%", s.ErrorRate*100, r.MaxErrorRate*100)
+	if s.FailRate > r.MaxErrorRate {
+		return true, fmt.Sprintf("failure rate %.0f%% exceeds %.0f%%", s.FailRate*100, r.MaxErrorRate*100)
 	}
 	if s.P99Us > r.MaxP99Ms*1000 {
 		return true, fmt.Sprintf("p99 %.1fs exceeds %.1fs", float64(s.P99Us)/1e6, float64(r.MaxP99Ms)/1e3)
@@ -167,7 +176,7 @@ func ComputeVerdict(sums []StageSummary, abortReason string) Verdict {
 	}
 	baseP99 := sums[0].P99Us
 	for i, s := range sums {
-		if s.ErrorRate > 0.01 || (i > 0 && baseP99 > 0 && s.P99Us >= 4*baseP99) {
+		if s.FailRate > 0.01 || (i > 0 && baseP99 > 0 && s.P99Us >= 4*baseP99) {
 			idx := i
 			v.SaturationStage = &idx
 			v.Notes = append(v.Notes, fmt.Sprintf(
@@ -187,7 +196,7 @@ func ComputeVerdict(sums []StageSummary, abortReason string) Verdict {
 	}
 	for i := 1; i < len(healthy); i++ {
 		prev, cur := healthy[i-1], healthy[i]
-		if cur.RPS < prev.RPS*1.10 && cur.ErrorRate <= 0.01 &&
+		if cur.RPS < prev.RPS*1.10 && cur.FailRate <= 0.01 &&
 			(prev.P99Us == 0 || cur.P99Us < prev.P99Us*3/2) {
 			v.GeneratorLimited = true
 			v.Notes = append(v.Notes,

@@ -101,6 +101,10 @@ func (o *Orchestrator) run(ctx context.Context, runID int64, tgt curlparse.Targe
 	if err := o.st.SetStatus(runID, "running"); err != nil {
 		log.Printf("orch: SetStatus(running) run=%d: %v", runID, err)
 	}
+	timeout := o.timeout
+	if rules.TimeoutMs > 0 {
+		timeout = time.Duration(rules.TimeoutMs) * time.Millisecond
+	}
 	status, abortReason := "completed", ""
 	var sums []metrics.StageSummary
 	persistErr := false
@@ -113,7 +117,7 @@ stages:
 		lastEmit := stageStart
 		var buf []metrics.Sample
 
-		for s := range engine.Run(ctx, tgt, st.Requests, st.Concurrency, o.timeout) {
+		for s := range engine.Run(ctx, tgt, st.Requests, st.Concurrency, timeout) {
 			acc.Add(s)
 			buf = append(buf, s)
 			if len(buf) >= 1000 {

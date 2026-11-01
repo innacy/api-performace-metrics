@@ -50,6 +50,9 @@ func TestStageAccSummarize(t *testing.T) {
 	if s.ErrorCount != 2 || s.Timeouts != 1 {
 		t.Fatalf("errors %+v", s)
 	}
+	if s.FailCount != 10 || s.FailRate != 0.1 { // 8×500 + 2 transport errors
+		t.Fatalf("fail = %d / %v", s.FailCount, s.FailRate)
+	}
 	if s.ErrorRate != 0.02 {
 		t.Fatalf("errorRate = %v", s.ErrorRate)
 	}
@@ -66,20 +69,20 @@ func TestStageAccSummarize(t *testing.T) {
 
 func TestShouldAbort(t *testing.T) {
 	r := DefaultAbortRules()
-	if ok, _ := ShouldAbort(StageSummary{ErrorRate: 0.6}, r); !ok {
+	if ok, _ := ShouldAbort(StageSummary{FailRate: 0.6}, r); !ok {
 		t.Error("error rate should abort")
 	}
 	if ok, _ := ShouldAbort(StageSummary{P99Us: 6_000_000}, r); !ok {
 		t.Error("p99 should abort")
 	}
-	if ok, _ := ShouldAbort(StageSummary{ErrorRate: 0.4, P99Us: 4_000_000}, r); ok {
+	if ok, _ := ShouldAbort(StageSummary{FailRate: 0.4, P99Us: 4_000_000}, r); ok {
 		t.Error("healthy stage should not abort")
 	}
 }
 
 func TestComputeVerdict(t *testing.T) {
 	mk := func(rps float64, errRate float64, p99 int64) StageSummary {
-		return StageSummary{RPS: rps, ErrorRate: errRate, P99Us: p99}
+		return StageSummary{RPS: rps, FailRate: errRate, P99Us: p99}
 	}
 	// stage2 p99 explodes past 4x baseline
 	sums := []StageSummary{mk(100, 0, 1000), mk(400, 0, 1500), mk(500, 0.001, 5000)}
@@ -170,6 +173,8 @@ func TestJSONTagsStageSummary(t *testing.T) {
 		"codes":       true,
 		"errorCount":  true,
 		"errorRate":   true,
+		"failCount":   true,
+		"failRate":    true,
 		"timeouts":    true,
 		"sampleErrors": true,
 	}

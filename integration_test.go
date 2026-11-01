@@ -64,8 +64,8 @@ func TestFullRamp(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if hits.Load() != 601 {
-		t.Errorf("target hits = %d, want 601", hits.Load())
+	if hits.Load() != 602 { // 600 load + 2 probe (cold + warm)
+		t.Errorf("target hits = %d, want 602", hits.Load())
 	}
 	if len(detail.Summaries) != 2 {
 		t.Fatalf("summaries = %d", len(detail.Summaries))

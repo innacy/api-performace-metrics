@@ -123,11 +123,10 @@ func TestAbortOnErrors(t *testing.T) {
 	}
 }
 
-// TestNon2xxNotTreatedAsError verifies that HTTP responses with non-2xx
-// status codes (e.g. 503) are recorded in Codes, do NOT count toward
-// ErrorCount/ErrorRate, and do not trigger an abort — as opposed to genuine
-// transport failures, which do (see TestAbortOnErrors).
-func TestNon2xxNotTreatedAsError(t *testing.T) {
+// Test5xxCountsAsFailure verifies that 5xx responses are recorded in Codes,
+// do NOT count as transport errors (ErrorCount/ErrorRate), but DO count as
+// failures (FailRate) and so trigger the failure-rate abort.
+func Test5xxCountsAsFailure(t *testing.T) {
 	st, ts, c, o := setup(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) })
 	tgt := curlparse.Target{Method: "GET", URL: ts.URL, Header: http.Header{}}
 	plan := []metrics.Stage{{5, 2}}
@@ -141,8 +140,8 @@ func TestNon2xxNotTreatedAsError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Status != "completed" {
-		t.Fatalf("status = %s, want completed (503s must not abort the run)", d.Status)
+	if d.Status != "aborted" {
+		t.Fatalf("status = %s, want aborted (100%% 503s exceeds the failure-rate rule)", d.Status)
 	}
 	if len(d.Summaries) != 1 {
 		t.Fatalf("summaries = %d", len(d.Summaries))
@@ -156,6 +155,25 @@ func TestNon2xxNotTreatedAsError(t *testing.T) {
 	}
 	if sum.ErrorRate != 0 {
 		t.Fatalf("errorRate = %v, want 0", sum.ErrorRate)
+	}
+	if sum.FailCount != 5 || sum.FailRate != 1 {
+		t.Fatalf("fail = %d / %v, want 5 / 1", sum.FailCount, sum.FailRate)
+	}
+}
+
+func TestPerRunTimeout(t *testing.T) {
+	st, ts, c, o := setup(t, func(w http.ResponseWriter, r *http.Request) { time.Sleep(300 * time.Millisecond) })
+	tgt := curlparse.Target{Method: "GET", URL: ts.URL, Header: http.Header{}}
+	plan := []metrics.Stage{{Requests: 2, Concurrency: 2}}
+	rules := metrics.AbortRules{MaxErrorRate: 1, MaxP99Ms: 5000, TimeoutMs: 50}
+	id, _ := st.CreateRun("c", tgt, plan, rules)
+	if err := o.Start(id, tgt, plan, rules); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, c)
+	d, _ := st.GetRun(id)
+	if d.Summaries[0].Timeouts != 2 {
+		t.Fatalf("timeouts = %d, want 2 (TimeoutMs=50 vs 300ms handler)", d.Summaries[0].Timeouts)
 	}
 }
 

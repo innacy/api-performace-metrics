@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report Charts Mock</title>
+<!-- Static mock: proposed report charts. Fake data (5-stage run, breaks at stage 4, aborted at 5). Hover + toggles work. -->
+<style>
+  :root {
+    --bg:#fafbfc; --fg:#1a1a2e; --muted:#6b7280; --card:#fff; --accent:#6366f1; --border:#e5e7eb; --track:#f1f3f7;
+    --good:#10b981; --bad:#ef4444; --warn:#f59e0b; --grid:rgba(0,0,0,.06);
+    --p50:#10b981; --p95:#6366f1; --p99:#ef4444; --rps:#c7d2fe; --prev:#cbd5e1; --c4xx:#f59e0b; --cerr:#7f1d1d;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg:#0b0d13; --fg:#e2e8f0; --muted:#94a3b8; --card:#141720; --accent:#818cf8; --border:#1e2433; --track:#1b2030;
+    --good:#34d399; --bad:#f87171; --warn:#fbbf24; --grid:rgba(255,255,255,.07);
+    --p50:#34d399; --p95:#818cf8; --p99:#f87171; --rps:#312e81; --prev:#475569; --cerr:#fca5a5;
+  } }
+  * { box-sizing:border-box }
+  body { margin:0 auto; max-width:1100px; padding:1.5rem 2rem; font:14px/1.55 system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg) }
+  @media (max-width:700px) { body { padding:1rem } }
+  h1 { font-size:1.25rem; margin:0 0 .2rem }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1rem 1.1rem 1.1rem; margin:1rem 0 }
+  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap }
+  .head h2 { font-size:1rem; margin:0 } .head p { margin:.15rem 0 0; color:var(--muted); font-size:12.5px; max-width:560px }
+  .look { font-size:12px; background:var(--track); border-radius:6px; padding:.35rem .6rem; margin:.6rem 0 0; color:var(--muted) }
+  .look b { color:var(--fg) }
+  .ctrls { display:flex; gap:.35rem; flex-wrap:wrap }
+  .tg { border:1px solid var(--border); background:var(--card); color:var(--muted); border-radius:99px; padding:.2rem .7rem; font-size:12px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:.35rem }
+  .tg i { width:9px; height:9px; border-radius:2px; display:inline-block }
+  .tg.on { color:var(--fg); border-color:var(--fg) }
+  .seg { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden }
+  .seg button { border:0; background:var(--card); color:var(--muted); padding:.25rem .7rem; font-size:12px; font-weight:600; cursor:pointer }
+  .seg button.on { background:var(--accent); color:#fff }
+  svg { width:100%; height:auto; display:block; margin-top:.6rem; overflow:visible }
+  svg text { fill:var(--muted); font-size:11px }
+  .tip { position:fixed; pointer-events:none; background:var(--fg); color:var(--bg); font-size:12px; padding:.45rem .6rem; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,.2); opacity:0; transition:opacity .1s; z-index:9; max-width:260px }
+  .tip b { color:inherit }
+  .pill { display:inline-block; font-size:11px; font-weight:600; padding:.05rem .5rem; border-radius:99px; background:var(--track) }
+  .legend { display:flex; gap:1rem; font-size:12px; color:var(--muted); margin-top:.4rem; flex-wrap:wrap }
+  .legend i { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:.3rem; vertical-align:-1px }
+</style>
+</head>
+<body>
+<h1>Report charts <span class="pill">mock</span></h1>
+<div class="muted" style="color:var(--muted)">Each chart answers one question. Hover for details, toggle what you need.</div>
+
+<div class="card">
+  <div class="head"><div><h2>Where does it break?</h2>
+    <p>Throughput (bars) and response times (lines) for each step of load. The red zone is where it got slower or started failing.</p></div>
+    <div class="ctrls" id="a-ctrls"></div></div>
+  <svg id="a" viewBox="0 0 760 300"></svg>
+  <div class="look">What to look for: <b>bars stop growing while lines shoot up</b> = the API is saturated. More load only adds waiting.</div>
+</div>
+
+<div class="card">
+  <div class="head"><div><h2>What happened over time</h2>
+    <p>Response times through the whole run. Red ticks at the bottom are failed requests.</p></div>
+    <div class="ctrls"><span id="b-ctrls" class="ctrls"></span>
+      <span class="seg" id="b-scale"><button class="on" data-v="equal">Equal per stage</button><button data-v="real">Real time</button></span></div></div>
+  <svg id="b" viewBox="0 0 760 290"></svg>
+  <div class="look">What to look for: <b>spikes inside a stage</b> (GC pauses, cold caches) and <b>a slow upward drift</b> (leaks, queue build-up).</div>
+</div>
+
+<div class="card">
+  <div class="head"><div><h2>How fast were most requests?</h2>
+    <p>Hover anywhere to read “<b>X%</b> of requests finished within <b>Y ms</b>”.</p></div>
+    <div class="ctrls"><span class="seg" id="c-stage"></span><span class="seg" id="c-mode"><button class="on" data-v="hist">Histogram</button><button data-v="cdf">Cumulative</button></span></div></div>
+  <svg id="c" viewBox="0 0 760 260"></svg>
+  <div class="look">What to look for: <b>two humps</b> = two kinds of requests (cache hit vs miss). <b>A long tail</b> right of p99 = some users wait much longer.</div>
+</div>
+
+<div class="card">
+  <div class="head"><div><h2>Which responses came back?</h2>
+    <p>Share of each response type over time. A healthy run stays green.</p></div></div>
+  <svg id="d" viewBox="0 0 760 170"></svg>
+  <div class="legend"><span><i style="background:var(--good)"></i>2xx success</span><span><i style="background:var(--c4xx)"></i>4xx client error</span><span><i style="background:var(--bad)"></i>5xx server error</span><span><i style="background:var(--cerr)"></i>timeout / connection error</span></div>
+</div>
+
+<div class="card">
+  <div class="head"><div><h2>Better or worse than last time?</h2>
+    <p>Typical (p50) to slowest-1% (p99) range per stage, this run vs <b>run 41</b> with the same curl.</p></div>
+    <div class="ctrls"><span class="seg"><button class="on">vs run 41</button><button>vs run 38</button><button>pick…</button></span></div></div>
+  <svg id="e" viewBox="0 0 760 230"></svg>
+  <div class="legend"><span><i style="background:var(--prev)"></i>run 41</span><span><i style="background:var(--accent)"></i>this run</span></div>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+// ---------- fake run ----------
+const S = [
+  { c: 10,  n: 100,    rps: 410,  p50: 22,  p95: 31,  p99: 38,   fail: 0,   dur: 0.24 },
+  { c: 25,  n: 1000,   rps: 1105, p50: 21,  p95: 34,  p99: 52,   fail: 0,   dur: 0.9 },
+  { c: 50,  n: 10000,  rps: 1840, p50: 26,  p95: 71,  p99: 118,  fail: 0,   dur: 5.4 },
+  { c: 100, n: 100000, rps: 1862, p50: 48,  p95: 190, p99: 310,  fail: 1.9, dur: 53.7 },
+  { c: 250, n: 54000,  rps: 1790, p50: 120, p95: 640, p99: 1450, fail: 9.8, dur: 30.2 },
+];
+const PREV = [{ p50: 23, p99: 36 }, { p50: 22, p99: 47 }, { p50: 25, p99: 96 }, { p50: 41, p99: 230 }, { p50: 102, p99: 1100 }];
+const BREAK = 3, ABORT_P99 = 1000;
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// ---------- helpers ----------
+const tip = document.getElementById('tip');
+const showTip = (e, html) => { tip.innerHTML = html; tip.style.opacity = 1; tip.style.left = Math.min(e.clientX + 14, innerWidth - 270) + 'px'; tip.style.top = e.clientY + 14 + 'px'; };
+const hideTip = () => tip.style.opacity = 0;
+const logY = (lo, hi, top, bot) => (v) => bot - (Math.log(Math.max(v, lo)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) * (bot - top);
+const ms = (v) => v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms';
+const line = (pts, color, w = 2.2, dash = '') => `<polyline fill="none" stroke="${color}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round" ${dash ? `stroke-dasharray="${dash}"` : ''} points="${pts.map(p => p.join(',')).join(' ')}"/>`;
+const svgPoint = (svg, e) => { const r = svg.getBoundingClientRect(); return (e.clientX - r.left) / r.width * svg.viewBox.baseVal.width; };
+function toggles(el, items, state, redraw) {
+  el.innerHTML = items.map(([k, label, color]) => `<button class="tg ${state[k] ? 'on' : ''}" data-k="${k}"><i style="background:var(${color})"></i>${label}</button>`).join('');
+  el.onclick = (e) => { const b = e.target.closest('button'); if (!b) return; state[b.dataset.k] = !state[b.dataset.k]; b.classList.toggle('on'); redraw(); };
+}
+function seg(el, onPick) {
+  el.onclick = (e) => { const b = e.target.closest('button'); if (!b) return; el.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset.v); };
+}
+
+// ---------- A: where does it break ----------
+const A = { rps: true, p50: true, p95: false, p99: true };
+function drawA() {
+  const svg = document.getElementById('a'), L = 52, R = 708, T = 18, B = 258, bw = (R - L) / S.length;
+  const maxR = Math.max(...S.map(s => s.rps)) * 1.15, yR = (v) => B - v / maxR * (B - T), yL = logY(10, 2000, T, B);
+  let g = '';
+  for (const v of [10, 30, 100, 300, 1000]) g += `<line x1="${L}" x2="${R}" y1="${yL(v)}" y2="${yL(v)}" stroke="${css('--grid')}"/><text x="${R + 6}" y="${yL(v) + 4}">${ms(v)}</text>`;
+  for (const v of [0, 500, 1000, 1500, 2000]) if (v < maxR) g += `<text x="${L - 6}" y="${yR(v) + 4}" text-anchor="end">${v}</text>`;
+  g += `<rect x="${L + BREAK * bw}" y="${T}" width="${R - L - BREAK * bw}" height="${B - T}" fill="${css('--bad')}" opacity=".07"/>
+        <text x="${L + BREAK * bw + 8}" y="${B - 8}" style="fill:var(--bad);font-weight:600">⚠ breaking point</text>
+        <line x1="${L}" x2="${R}" y1="${yL(ABORT_P99)}" y2="${yL(ABORT_P99)}" stroke="${css('--bad')}" stroke-dasharray="5 4"/>
+        <text x="${L + 6}" y="${yL(ABORT_P99) - 5}" style="fill:var(--bad)">abort if p99 &gt; 1s</text>`;
+  S.forEach((s, i) => {
+    const cx = L + bw * (i + .5);
+    if (A.rps) g += `<rect x="${cx - bw * .28}" y="${yR(s.rps)}" width="${bw * .56}" height="${B - yR(s.rps)}" rx="5" fill="${css('--rps')}"/>
+      <text x="${cx}" y="${yR(s.rps) + 16}" text-anchor="middle" style="fill:var(--fg);font-weight:600">${s.rps.toLocaleString()}/s</text>`;
+    g += `<text x="${cx}" y="${B + 18}" text-anchor="middle" style="fill:var(--fg)">${s.c} at once</text><text x="${cx}" y="${B + 32}" text-anchor="middle">stage ${i + 1}</text>`;
+  });
+  for (const [k, c] of [['p50', '--p50'], ['p95', '--p95'], ['p99', '--p99']]) if (A[k]) {
+    const pts = S.map((s, i) => [L + bw * (i + .5), yL(s[k])]);
+    g += line(pts, css(c), 2.5) + pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="4" fill="${css('--card')}" stroke="${css(c)}" stroke-width="2.5"/>`).join('');
+  }
+  g += `<text x="${L - 6}" y="${T - 4}" text-anchor="end">req/s</text><text x="${R + 6}" y="${T - 4}">latency</text>`;
+  g += S.map((s, i) => `<rect class="hit" data-i="${i}" x="${L + bw * i}" y="${T}" width="${bw}" height="${B - T}" fill="transparent"/>`).join('');
+  svg.innerHTML = g;
+  svg.onmousemove = (e) => { const i = e.target.dataset?.i; if (i == null) return hideTip(); const s = S[i];
+    showTip(e, `<b>Stage ${+i + 1} · ${s.c} at once</b><br>${s.rps.toLocaleString()} req/s<br>p50 ${ms(s.p50)} · p95 ${ms(s.p95)} · p99 ${ms(s.p99)}<br>${s.fail ? `<span style="color:var(--bad)">${s.fail}% failed</span>` : 'no failures'}`); };
+  svg.onmouseleave = hideTip;
+}
+toggles(document.getElementById('a-ctrls'), [['rps', 'Throughput', '--rps'], ['p50', 'p50', '--p50'], ['p95', 'p95', '--p95'], ['p99', 'p99', '--p99']], A, drawA);
+
+// ---------- timeline data (per stage, 40 buckets) ----------
+const TL = S.map((s, si) => Array.from({ length: 40 }, (_, k) => {
+  const drift = si >= BREAK ? 1 + k / 40 * .6 : 1, spike = rnd() < .04 ? 2.5 : 1;
+  const j = () => .85 + rnd() * .3;
+  const fail = s.fail ? Math.max(0, s.fail * (.4 + k / 40 * 1.3) * j()) : 0;
+  return { p50: s.p50 * drift * j(), p95: s.p95 * drift * j() * spike, p99: s.p99 * drift * j() * spike, fail, t: s.dur * k / 40 };
+}));
+
+// ---------- B: over time ----------
+const B_ = { p50: true, p95: false, p99: true, errs: true, scale: 'equal' };
+function drawB() {
+  const svg = document.getElementById('b'), L = 46, R = 740, T = 22, BOT = 210, EL = 228, EB = 262, yL = logY(10, 3000, T, BOT);
+  const total = S.reduce((a, s) => a + s.dur, 0);
+  const widths = S.map(s => B_.scale === 'equal' ? (R - L) / S.length : (R - L) * s.dur / total);
+  let x0 = L, g = '', series = { p50: [], p95: [], p99: [] }, errBars = '', hits = '';
+  for (const v of [10, 30, 100, 300, 1000, 3000]) g += `<line x1="${L}" x2="${R}" y1="${yL(v)}" y2="${yL(v)}" stroke="${css('--grid')}"/><text x="${L - 6}" y="${yL(v) + 4}" text-anchor="end">${ms(v)}</text>`;
+  S.forEach((s, si) => {
+    const w = widths[si];
+    g += `<rect x="${x0}" y="${T}" width="${w}" height="${EB - T}" fill="${si % 2 ? css('--track') : 'transparent'}" opacity=".7"/>`;
+    if (w > 34) g += `<text x="${x0 + 4}" y="${T - 6}" style="fill:${si >= BREAK ? css('--bad') : css('--muted')}">${w > 90 ? `stage ${si + 1} · ${s.c} at once` : `S${si + 1}`}</text>`;
+    TL[si].forEach((p, k) => {
+      const x = x0 + w * (k + .5) / 40;
+      for (const q of ['p50', 'p95', 'p99']) series[q].push([x, yL(p[q])]);
+      if (B_.errs && p.fail) errBars += `<rect x="${x - w / 100}" y="${EB - p.fail / 20 * (EB - EL)}" width="${Math.max(1.2, w / 50)}" height="${p.fail / 20 * (EB - EL)}" fill="${css('--bad')}"/>`;
+      hits += `<rect data-s="${si}" data-k="${k}" x="${x - w / 80}" y="${T}" width="${w / 40}" height="${EB - T}" fill="transparent"/>`;
+    });
+    x0 += w;
+  });
+  for (const [q, c] of [['p50', '--p50'], ['p95', '--p95'], ['p99', '--p99']]) if (B_[q]) g += line(series[q], css(c), 1.8);
+  g += `<line x1="${L}" x2="${R}" y1="${EB}" y2="${EB}" stroke="${css('--border')}"/>`;
+  if (B_.errs) g += `<text x="${L - 6}" y="${EB - 4}" text-anchor="end">fails</text>` + errBars;
+  svg.innerHTML = g + `<text x="${R}" y="${EB + 18}" text-anchor="end">${B_.scale === 'real' ? `${Math.round(total)}s total →` : 'each stage gets equal width →'}</text>` + hits;
+  svg.onmousemove = (e) => { const d = e.target.dataset; if (d.s == null) return hideTip(); const p = TL[d.s][d.k];
+    showTip(e, `<b>Stage ${+d.s + 1}</b>, ${p.t.toFixed(1)}s in<br>p50 ${ms(p.p50)} · p95 ${ms(p.p95)} · p99 ${ms(p.p99)}${p.fail ? `<br><span style="color:var(--bad)">${p.fail.toFixed(1)}% failed</span>` : ''}`); };
+  svg.onmouseleave = hideTip;
+}
+toggles(document.getElementById('b-ctrls'), [['p50', 'p50', '--p50'], ['p95', 'p95', '--p95'], ['p99', 'p99', '--p99'], ['errs', 'Failures', '--bad']], B_, drawB);
+seg(document.getElementById('b-scale'), (v) => { B_.scale = v; drawB(); });
+
+// ---------- C: spread ----------
+const C = { stage: 3, mode: 'hist' };
+const LO = 5, HI = 4000, NB = 60;
+const binsFor = (s) => { // two-hump fake distribution around p50 with a tail toward p99
+  const b = Array(NB).fill(0), bx = (v) => Math.floor((Math.log(v) - Math.log(LO)) / (Math.log(HI) - Math.log(LO)) * NB);
+  for (let k = 0; k < 6000; k++) {
+    const v = rnd() < .78 ? s.p50 * Math.exp((rnd() + rnd() + rnd() - 1.5) * .5) : s.p95 * Math.exp((rnd() + rnd() - 1) * .7);
+    const i = bx(v); if (i >= 0 && i < NB) b[i]++;
+  }
+  return b;
+};
+const BINS = S.map(binsFor);
+document.getElementById('c-stage').innerHTML = S.map((s, i) => `<button data-v="${i}" class="${i === C.stage ? 'on' : ''}">S${i + 1}</button>`).join('');
+seg(document.getElementById('c-stage'), (v) => { C.stage = +v; drawC(); });
+seg(document.getElementById('c-mode'), (v) => { C.mode = v; drawC(); });
+function drawC() {
+  const svg = document.getElementById('c'), L = 46, R = 740, T = 16, BOT = 222, s = S[C.stage], b = BINS[C.stage];
+  const xOf = (v) => L + (Math.log(v) - Math.log(LO)) / (Math.log(HI) - Math.log(LO)) * (R - L), bw = (R - L) / NB;
+  const tot = b.reduce((a, n) => a + n, 0), max = Math.max(...b); let cum = 0;
+  const cdf = b.map(n => (cum += n) / tot);
+  let g = '';
+  for (const v of [5, 10, 30, 100, 300, 1000, 3000]) g += `<line x1="${xOf(v)}" x2="${xOf(v)}" y1="${T}" y2="${BOT}" stroke="${css('--grid')}"/><text x="${xOf(v)}" y="${BOT + 16}" text-anchor="middle">${ms(v)}</text>`;
+  if (C.mode === 'hist') g += b.map((n, i) => `<rect x="${L + i * bw + .5}" y="${BOT - n / max * (BOT - T)}" width="${bw - 1}" height="${n / max * (BOT - T)}" rx="2" fill="${css('--accent')}" opacity=".8"/>`).join('');
+  else {
+    g += line(cdf.map((c, i) => [L + (i + 1) * bw, BOT - c * (BOT - T)]), css('--accent'), 2.5);
+    for (const v of [.5, .9, .99]) g += `<line x1="${L}" x2="${R}" y1="${BOT - v * (BOT - T)}" y2="${BOT - v * (BOT - T)}" stroke="${css('--grid')}"/><text x="${L - 6}" y="${BOT - v * (BOT - T) + 4}" text-anchor="end">${v * 100}%</text>`;
+  }
+  [['p50', '--p50'], ['p95', '--p95'], ['p99', '--p99']].forEach(([k, c], j) =>
+    g += `<line x1="${xOf(s[k])}" x2="${xOf(s[k])}" y1="${T}" y2="${BOT}" stroke="${css(c)}" stroke-width="2" stroke-dasharray="4 3"/>
+          <text x="${xOf(s[k]) + 4}" y="${T + 10 + j * 14}" style="fill:${css(c)};font-weight:600">${k} ${ms(s[k])}</text>`);
+  g += `<line id="c-cursor" x1="0" x2="0" y1="${T}" y2="${BOT}" stroke="${css('--fg')}" opacity="0"/>`;
+  svg.innerHTML = g;
+  svg.onmousemove = (e) => {
+    const x = svgPoint(svg, e), i = Math.floor((x - L) / bw);
+    if (i < 0 || i >= NB) return hideTip();
+    const upTo = Math.exp(Math.log(LO) + (i + 1) / NB * (Math.log(HI) - Math.log(LO)));
+    const cur = svg.querySelector('#c-cursor'); cur.setAttribute('x1', x); cur.setAttribute('x2', x); cur.setAttribute('opacity', .4);
+    showTip(e, `<b>${(cdf[i] * 100).toFixed(1)}%</b> of requests finished within <b>${ms(upTo)}</b><br>${(100 - cdf[i] * 100).toFixed(1)}% took longer`);
+  };
+  svg.onmouseleave = () => { hideTip(); svg.querySelector('#c-cursor').setAttribute('opacity', 0); };
+}
+
+// ---------- D: response types ----------
+function drawD() {
+  const svg = document.getElementById('d'), L = 46, R = 740, T = 8, BOT = 140, all = TL.flat(), bw = (R - L) / all.length;
+  let g = '', x = L;
+  all.forEach((p, i) => {
+    const e5 = p.fail * .7, er = p.fail * .3, e4 = .2, ok = 100 - e5 - er - e4;
+    let y = BOT;
+    for (const [v, c] of [[ok, '--good'], [e4, '--c4xx'], [e5, '--bad'], [er, '--cerr']]) {
+      const h = v / 100 * (BOT - T); y -= h;
+      g += `<rect x="${x}" y="${y}" width="${bw + .3}" height="${h}" fill="${css(c)}" opacity="${c === '--good' ? .55 : .95}"/>`;
+    }
+    x += bw;
+  });
+  S.forEach((s, si) => { const xs = L + si * 40 * bw; g += `<line x1="${xs}" x2="${xs}" y1="${T}" y2="${BOT}" stroke="${css('--card')}" stroke-width="2"/><text x="${xs + 40 * bw / 2}" y="${BOT + 16}" text-anchor="middle">stage ${si + 1}</text>`; });
+  g += `<text x="${L - 6}" y="${T + 8}" text-anchor="end">100%</text><text x="${L - 6}" y="${BOT}" text-anchor="end">0%</text>`;
+  svg.innerHTML = g;
+}
+
+// ---------- E: compare ----------
+function drawE() {
+  const svg = document.getElementById('e'), L = 90, R = 540, T = 10, row = 42, xOf = (v) => L + (Math.log(v) - Math.log(10)) / (Math.log(3000) - Math.log(10)) * (R - L);
+  let g = '';
+  for (const v of [10, 30, 100, 300, 1000, 3000]) g += `<line x1="${xOf(v)}" x2="${xOf(v)}" y1="${T}" y2="${T + row * S.length}" stroke="${css('--grid')}"/><text x="${xOf(v)}" y="${T + row * S.length + 14}" text-anchor="middle">${ms(v)}</text>`;
+  S.forEach((s, i) => {
+    const y = T + row * i + row / 2, p = PREV[i], d = s.p99 / p.p99 - 1;
+    g += `<text x="${L - 12}" y="${y + 4}" text-anchor="end" style="fill:var(--fg)">S${i + 1} · ${s.c}</text>
+      <line x1="${xOf(p.p50)}" x2="${xOf(p.p99)}" y1="${y - 6}" y2="${y - 6}" stroke="${css('--prev')}" stroke-width="6" stroke-linecap="round"/>
+      <line x1="${xOf(s.p50)}" x2="${xOf(s.p99)}" y1="${y + 6}" y2="${y + 6}" stroke="${css('--accent')}" stroke-width="6" stroke-linecap="round"/>
+      <text x="${R + 16}" y="${y + 4}" style="fill:${Math.abs(d) < .05 ? css('--muted') : d > 0 ? css('--bad') : css('--good')};font-weight:600">p99 ${d > 0 ? '▲' : '▼'} ${Math.round(Math.abs(d) * 100)}%  (${ms(p.p99)} → ${ms(s.p99)})</text>`;
+  });
+  svg.innerHTML = g;
+}
+
+const drawAll = () => { drawA(); drawB(); drawC(); drawD(); drawE(); };
+drawAll();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawAll);
+</script>
+</body>
+</html>

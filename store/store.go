@@ -4,6 +4,9 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"math"
+	"slices"
+	"strings"
 	"time"
 
 	"apiperf/curlparse"
@@ -53,6 +56,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// Added after v1: older databases lack the column.
+	if _, err := db.Exec(`ALTER TABLE runs ADD COLUMN probe_json TEXT`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
 }
 
@@ -67,6 +75,24 @@ type RunMeta struct {
 	CreatedAt string `json:"createdAt"` // RFC3339
 	Curl      string `json:"curl"`
 	Status    string `json:"status"` // pending|running|completed|aborted|killed
+}
+
+// RunListItem is a History row: run meta plus headline results.
+type RunListItem struct {
+	RunMeta
+	Verdict *metrics.Verdict      `json:"verdict"`
+	Peak    *metrics.StageSummary `json:"peak"` // last completed stage
+	Stages  int                   `json:"stages"`
+}
+
+// SetProbe stores the Verify probe result (any JSON-encodable value) for a run.
+func (s *Store) SetProbe(runID int64, probe any) error {
+	b, err := json.Marshal(probe)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE runs SET probe_json=? WHERE id=?`, string(b), runID)
+	return err
 }
 
 // CreateRun inserts a new run with status=pending and returns its ID.
@@ -164,21 +190,39 @@ type RunDetail struct {
 	Summaries []metrics.StageSummary `json:"summaries"`
 	Verdict   *metrics.Verdict       `json:"verdict"` // nil while running
 	Target    curlparse.Target       `json:"target"`
+	Probe     json.RawMessage        `json:"probe,omitempty"` // engine.ProbeResult from Verify
 }
 
-// ListRuns returns all runs, newest first.
-func (s *Store) ListRuns() ([]RunMeta, error) {
-	rows, err := s.db.Query(`SELECT id, created_at, curl, status FROM runs ORDER BY id DESC`)
+// ListRuns returns all runs, newest first, with headline results.
+func (s *Store) ListRuns() ([]RunListItem, error) {
+	rows, err := s.db.Query(`
+SELECT r.id, r.created_at, r.curl, r.status, r.verdict_json,
+  (SELECT summary_json FROM stage_summaries WHERE run_id=r.id ORDER BY stage DESC LIMIT 1),
+  (SELECT COUNT(*) FROM stage_summaries WHERE run_id=r.id)
+FROM runs r ORDER BY r.id DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var runs []RunMeta
+	var runs []RunListItem
 	for rows.Next() {
-		var m RunMeta
-		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Curl, &m.Status); err != nil {
+		var m RunListItem
+		var verdictJSON, peakJSON sql.NullString
+		if err := rows.Scan(&m.ID, &m.CreatedAt, &m.Curl, &m.Status, &verdictJSON, &peakJSON, &m.Stages); err != nil {
 			return nil, err
+		}
+		if verdictJSON.Valid {
+			m.Verdict = new(metrics.Verdict)
+			if err := json.Unmarshal([]byte(verdictJSON.String), m.Verdict); err != nil {
+				return nil, err
+			}
+		}
+		if peakJSON.Valid {
+			m.Peak = new(metrics.StageSummary)
+			if err := json.Unmarshal([]byte(peakJSON.String), m.Peak); err != nil {
+				return nil, err
+			}
 		}
 		runs = append(runs, m)
 	}
@@ -189,10 +233,13 @@ func (s *Store) ListRuns() ([]RunMeta, error) {
 func (s *Store) GetRun(id int64) (RunDetail, error) {
 	var d RunDetail
 	var targetJSON, planJSON, rulesJSON string
-	var verdictJSON sql.NullString
-	row := s.db.QueryRow(`SELECT id, created_at, curl, status, target_json, plan_json, rules_json, verdict_json FROM runs WHERE id=?`, id)
-	if err := row.Scan(&d.ID, &d.CreatedAt, &d.Curl, &d.Status, &targetJSON, &planJSON, &rulesJSON, &verdictJSON); err != nil {
+	var verdictJSON, probeJSON sql.NullString
+	row := s.db.QueryRow(`SELECT id, created_at, curl, status, target_json, plan_json, rules_json, verdict_json, probe_json FROM runs WHERE id=?`, id)
+	if err := row.Scan(&d.ID, &d.CreatedAt, &d.Curl, &d.Status, &targetJSON, &planJSON, &rulesJSON, &verdictJSON, &probeJSON); err != nil {
 		return RunDetail{}, err
+	}
+	if probeJSON.Valid {
+		d.Probe = json.RawMessage(probeJSON.String)
 	}
 	if err := json.Unmarshal([]byte(targetJSON), &d.Target); err != nil {
 		return RunDetail{}, err
@@ -233,99 +280,105 @@ func (s *Store) GetRun(id int64) (RunDetail, error) {
 	return d, nil
 }
 
-// SeriesPoint is one bucket of a time-bucketed latency series.
+// SeriesPoint is one time bucket of a stage: latency percentiles and response mix.
 type SeriesPoint struct {
-	OffsetMs int64 `json:"offsetMs"`
-	AvgUs    int64 `json:"avgUs"`
-	MaxUs    int64 `json:"maxUs"`
+	OffsetMs int64 `json:"offsetMs"` // bucket start, ms since stage start
 	Count    int64 `json:"count"`
+	P50Us    int64 `json:"p50Us"`
+	P95Us    int64 `json:"p95Us"`
+	P99Us    int64 `json:"p99Us"`
+	OK       int64 `json:"ok"` // < 400
+	C4xx     int64 `json:"c4xx"`
+	C5xx     int64 `json:"c5xx"`
+	Errors   int64 `json:"errors"` // transport errors/timeouts (code 0)
 }
 
-// Series buckets results by time offset into <=buckets points (SQL GROUP BY).
-// span = max(offset_ms)+1; bucket = offset_ms*buckets/span
-const seriesQ = `
-WITH span AS (SELECT MAX(offset_ms)+1 AS s FROM results WHERE run_id=? AND stage=?)
-SELECT MIN(offset_ms), CAST(AVG(latency_us) AS INTEGER), MAX(latency_us), COUNT(*)
-FROM results, span WHERE run_id=? AND stage=?
-GROUP BY offset_ms * ? / span.s ORDER BY 1`
+// stageRows loads one stage's raw results.
+// ponytail: holds a whole stage in memory (~24 B/row, ~24 MB at 1M); fine for one report view.
+func (s *Store) stageRows(runID int64, stage int) (offs, lats []int64, codes []int, err error) {
+	rows, err := s.db.Query(`SELECT offset_ms, latency_us, code FROM results WHERE run_id=? AND stage=?`, runID, stage)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var o, l int64
+		var c int
+		if err := rows.Scan(&o, &l, &c); err != nil {
+			return nil, nil, nil, err
+		}
+		offs, lats, codes = append(offs, o), append(lats, l), append(codes, c)
+	}
+	return offs, lats, codes, rows.Err()
+}
 
+// Series splits a stage into <=buckets equal time buckets (empty ones omitted).
 func (s *Store) Series(runID int64, stage, buckets int) ([]SeriesPoint, error) {
-	rows, err := s.db.Query(seriesQ, runID, stage, runID, stage, buckets)
-	if err != nil {
+	offs, lats, codes, err := s.stageRows(runID, stage)
+	if err != nil || len(offs) == 0 {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var pts []SeriesPoint
-	for rows.Next() {
-		var p SeriesPoint
-		if err := rows.Scan(&p.OffsetMs, &p.AvgUs, &p.MaxUs, &p.Count); err != nil {
-			return nil, err
+	span := slices.Max(offs) + 1
+	pts := make([]SeriesPoint, buckets)
+	byBucket := make([][]int64, buckets)
+	for i, o := range offs {
+		b := int(o * int64(buckets) / span)
+		p := &pts[b]
+		p.Count++
+		switch c := codes[i]; {
+		case c == 0:
+			p.Errors++
+		case c >= 500:
+			p.C5xx++
+		case c >= 400:
+			p.C4xx++
+		default:
+			p.OK++
 		}
-		pts = append(pts, p)
+		byBucket[b] = append(byBucket[b], lats[i])
 	}
-	return pts, rows.Err()
-}
-
-// ErrorSeriesPoint is one bucket of a time-bucketed error count series.
-type ErrorSeriesPoint struct {
-	OffsetMs int64 `json:"offsetMs"`
-	Errors   int64 `json:"errors"`
-	Total    int64 `json:"total"`
-}
-
-const errorSeriesQ = `
-WITH span AS (SELECT MAX(offset_ms)+1 AS s FROM results WHERE run_id=? AND stage=?)
-SELECT MIN(offset_ms), SUM(CASE WHEN code=0 THEN 1 ELSE 0 END), COUNT(*)
-FROM results, span WHERE run_id=? AND stage=?
-GROUP BY offset_ms * ? / span.s ORDER BY 1`
-
-func (s *Store) ErrorSeries(runID int64, stage, buckets int) ([]ErrorSeriesPoint, error) {
-	rows, err := s.db.Query(errorSeriesQ, runID, stage, runID, stage, buckets)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var pts []ErrorSeriesPoint
-	for rows.Next() {
-		var p ErrorSeriesPoint
-		if err := rows.Scan(&p.OffsetMs, &p.Errors, &p.Total); err != nil {
-			return nil, err
+	var out []SeriesPoint
+	for b, p := range pts {
+		if p.Count == 0 {
+			continue
 		}
-		pts = append(pts, p)
+		l := byBucket[b]
+		slices.Sort(l)
+		p.OffsetMs = int64(b) * span / int64(buckets)
+		p.P50Us, p.P95Us, p.P99Us = metrics.Percentile(l, .50), metrics.Percentile(l, .95), metrics.Percentile(l, .99)
+		out = append(out, p)
 	}
-	return pts, rows.Err()
+	return out, nil
 }
 
-// HistBar is one bin of an equal-width latency histogram.
+// HistBar is one bin of a log-scale latency histogram: [FromUs, ToUs).
 type HistBar struct {
 	FromUs int64 `json:"fromUs"`
+	ToUs   int64 `json:"toUs"`
 	Count  int64 `json:"count"`
 }
 
-// Histogram groups latencies into ~bins equal-width buckets.
-const histQ = `
-WITH b AS (SELECT MIN(latency_us) AS lo, (MAX(latency_us)-MIN(latency_us))/? + 1 AS w
-           FROM results WHERE run_id=? AND stage=?)
-SELECT b.lo + ((latency_us - b.lo)/b.w)*b.w AS from_us, COUNT(*)
-FROM results, b WHERE run_id=? AND stage=?
-GROUP BY (latency_us - b.lo)/b.w ORDER BY 1`
-
+// Histogram groups a stage's latencies into `bins` log-spaced bins between
+// min and max (all bins returned, including empty ones, so the axis is continuous).
 func (s *Store) Histogram(runID int64, stage, bins int) ([]HistBar, error) {
-	rows, err := s.db.Query(histQ, bins, runID, stage, runID, stage)
-	if err != nil {
+	_, lats, _, err := s.stageRows(runID, stage)
+	if err != nil || len(lats) == 0 {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var bars []HistBar
-	for rows.Next() {
-		var b HistBar
-		if err := rows.Scan(&b.FromUs, &b.Count); err != nil {
-			return nil, err
-		}
-		bars = append(bars, b)
+	lo, hi := float64(max(slices.Min(lats), 1)), float64(max(slices.Max(lats), 1))
+	span := math.Log(hi / lo)
+	if span == 0 {
+		return []HistBar{{FromUs: int64(lo), ToUs: int64(hi) + 1, Count: int64(len(lats))}}, nil
 	}
-	return bars, rows.Err()
+	bars := make([]HistBar, bins)
+	for i := range bars {
+		bars[i].FromUs = int64(lo * math.Exp(span*float64(i)/float64(bins)))
+		bars[i].ToUs = int64(lo * math.Exp(span*float64(i+1)/float64(bins)))
+	}
+	bars[bins-1].ToUs = int64(hi) + 1
+	for _, v := range lats {
+		i := int(math.Log(float64(max(v, 1))/lo) / span * float64(bins))
+		bars[min(max(i, 0), bins-1)].Count++
+	}
+	return bars, nil
 }

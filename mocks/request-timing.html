@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Benchmark — Mock</title>
+<!-- Static mock: proposed Verify-step timing breakdown + report polish. Fake data, no backend. -->
+<style>
+  :root {
+    --bg:#fafbfc; --fg:#1a1a2e; --muted:#6b7280; --card:#fff; --accent:#6366f1;
+    --bad:#ef4444; --good:#10b981; --warn:#f59e0b; --border:#e5e7eb; --track:#f1f3f7;
+    --dns:#8b5cf6; --tcp:#3b82f6; --tls:#f59e0b; --send:#94a3b8; --wait:#10b981; --recv:#06b6d4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0b0d13; --fg:#e2e8f0; --muted:#94a3b8; --card:#141720; --accent:#818cf8;
+      --bad:#f87171; --good:#34d399; --warn:#fbbf24; --border:#1e2433; --track:#1b2030;
+    }
+  }
+  * { box-sizing:border-box }
+  body { margin:0 auto; max-width:1100px; padding:1.5rem 2rem; font:14px/1.6 system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--fg) }
+  @media (max-width:700px) { body { padding:1rem } }
+  h1 { font-size:1.25rem; margin:0 }
+  h2 { font-size:.8rem; font-weight:600; margin:1.4rem 0 .5rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted) }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; margin:.7rem 0; position:relative }
+  .muted { color:var(--muted) } .bad { color:var(--bad) } .good { color:var(--good) } .warn { color:var(--warn) }
+  .note { font-size:12px; background:var(--track); border-left:3px solid var(--accent); padding:.4rem .7rem; border-radius:4px; margin:.5rem 0 }
+  .tabs { display:flex; gap:.3rem; margin:1rem 0 } .tabs button { border:1px solid var(--border); background:var(--card); color:var(--fg); border-radius:8px; padding:.4rem .9rem; cursor:pointer; font-weight:600 }
+  .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent) }
+  .hidden { display:none }
+  code.curl { display:block; white-space:pre-wrap; overflow-wrap:anywhere; font:12.5px/1.5 ui-monospace,monospace; padding-right:2.2rem; color:var(--muted) }
+  .copy { position:absolute; top:.6rem; right:.6rem; border:1px solid var(--border); background:var(--card); color:var(--muted); border-radius:6px; padding:.2rem .45rem; cursor:pointer }
+
+  /* Waterfall */
+  .summary-line { font-size:15px; margin:.2rem 0 .8rem }
+  .stack { display:flex; height:22px; border-radius:6px; overflow:hidden; background:var(--track) }
+  .stack div { height:100% }
+  .wf { display:grid; grid-template-columns:150px 1fr 70px; gap:.35rem .8rem; align-items:center; margin-top:1rem }
+  .wf .lbl { display:flex; align-items:center; gap:.45rem; font-weight:500 }
+  .dot { width:10px; height:10px; border-radius:3px; flex:none }
+  .wf .track { position:relative; height:14px; background:var(--track); border-radius:4px }
+  .wf .bar { position:absolute; top:0; height:100%; border-radius:4px; min-width:2px }
+  .wf .ms { text-align:right; font-variant-numeric:tabular-nums }
+  .wf .why { grid-column:1/-1; font-size:12px; color:var(--muted); margin:-.2rem 0 .3rem 1.4rem }
+  @media (max-width:700px) { .wf { grid-template-columns:110px 1fr 56px } }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:1rem } @media (max-width:800px) { .pair { grid-template-columns:1fr } }
+  .pill { display:inline-block; font-size:11px; font-weight:600; padding:.05rem .5rem; border-radius:99px; background:var(--track) }
+
+  /* Report */
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:.7rem } @media (max-width:700px) { .kpis { grid-template-columns:1fr 1fr } }
+  .kpi { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:.8rem 1rem }
+  .kpi b { display:block; font-size:1.4rem; font-variant-numeric:tabular-nums }
+  .kpi small { color:var(--muted) }
+  table { border-collapse:collapse; width:100%; font-size:13px } td,th { padding:.45rem .6rem; text-align:right; border-bottom:1px solid var(--border) }
+  th { color:var(--muted); font-size:11px; text-transform:uppercase } th:first-child,td:first-child { text-align:left }
+  .tblwrap { overflow-x:auto }
+  .chip { font-size:11px; padding:.05rem .4rem; border-radius:4px; margin-left:.2rem; background:color-mix(in srgb, var(--good) 18%, transparent) }
+  .chip.e { background:color-mix(in srgb, var(--bad) 18%, transparent) }
+  .hist { display:flex; align-items:flex-end; gap:2px; height:120px; border-bottom:1px solid var(--border) }
+  .hist div { flex:1; background:var(--accent); opacity:.75; border-radius:2px 2px 0 0 }
+  .delta-up { color:var(--bad) } .delta-down { color:var(--good) }
+</style>
+</head>
+<body>
+<h1>API Benchmark <span class="pill">mock</span></h1>
+<div class="tabs"><button class="active" data-t="verify">1 · Verify (timing breakdown)</button><button data-t="report">2 · Run report</button></div>
+
+<!-- ============ VERIFY ============ -->
+<section id="t-verify">
+  <h2>Your request</h2>
+  <div class="card">
+    <button class="copy" title="Copy curl">⧉</button>
+    <code class="curl">curl -X POST https://api.example.internal/v1/orders/search?include=items,customer,shipping&amp;page=1&amp;pageSize=50 -H 'Content-Type: application/json' -H 'Authorization: Bearer ••••••••(redacted)' -d '{"status":["open","pending"],"from":"2026-10-01","to":"2026-10-31"}'</code>
+  </div>
+
+  <h2>What happened when we sent it once</h2>
+  <div class="card">
+    <div><b class="good">HTTP 200</b> · 412 ms total · 18.4 KB · HTTP/2 · TLS 1.3 · 10.0.4.17:443</div>
+    <p class="summary-line"><b>Most of the time (72%) was spent waiting for your server to answer.</b> <span class="muted">Connection setup took 96 ms; the next requests on the same connection skip it.</span></p>
+    <div class="stack" id="stack"></div>
+    <div class="wf" id="wf"></div>
+  </div>
+
+  <h2>First request vs. a repeat request</h2>
+  <div class="pair">
+    <div class="card">
+      <b>Cold</b> <span class="muted">new connection</span>
+      <div class="stack" id="stack-cold" style="margin-top:.6rem"></div>
+      <p class="muted" style="margin:.5rem 0 0">412 ms. Includes DNS + TCP + TLS: what a brand-new client pays.</p>
+    </div>
+    <div class="card">
+      <b>Warm</b> <span class="muted">reused connection</span>
+      <div class="stack" id="stack-warm" style="margin-top:.6rem"></div>
+      <p class="muted" style="margin:.5rem 0 0">301 ms. Only the request itself. This is what the load test mostly measures.</p>
+    </div>
+  </div>
+  <div class="note">How it works: Go's <code>net/http/httptrace</code> on the Verify probe (2 requests: cold + warm). No changes to the load engine. Per-phase timing <i>under load</i> would need a custom transport; skip unless asked.</div>
+</section>
+
+<!-- ============ REPORT ============ -->
+<section id="t-report" class="hidden">
+  <h2>Run 42 · completed · 31 Oct 2026, 20:04</h2>
+  <div class="card">
+    <button class="copy" title="Copy curl">⧉</button>
+    <code class="curl">curl -X POST https://api.example.internal/v1/orders/search?include=items,customer,shipping&amp;page=1&amp;pageSize=50 -H 'Content-Type: application/json' -H 'Authorization: Bearer ••••••••(redacted)' -d '{"status":["open","pending"],"from":"2026-10-01","to":"2026-10-31"}'</code>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><small>Comfortable capacity</small><b>1,840 req/s</b><small>stage 3, before slowdown</small></div>
+    <div class="kpi"><small>Typical response (p50)</small><b>48 ms</b><small class="delta-down">▼ 12% vs run 41</small></div>
+    <div class="kpi"><small>Slowest 1% (p99)</small><b>310 ms</b><small class="delta-up">▲ 35% vs run 41</small></div>
+    <div class="kpi"><small>Failed requests</small><b class="bad">2.4%</b><small>incl. 5xx: 1,912 × 503</small></div>
+  </div>
+
+  <div class="card">
+    <b>In plain words</b>
+    <ul style="margin:.4rem 0 0; padding-left:1.2rem">
+      <li>Up to <b>50 users at once</b>, your API stays fast (p99 under 120 ms).</li>
+      <li>At <b>100 at once</b>, the slowest requests get 4× slower and <b class="bad">503 errors</b> appear: this is the breaking point.</li>
+      <li>Throughput stopped growing after stage 3, so more load only adds waiting, not work done.</li>
+    </ul>
+  </div>
+
+  <h2>Stages</h2>
+  <div class="card tblwrap">
+    <table>
+      <thead><tr><th>Stage</th><th>Requests</th><th>At once</th><th>RPS</th><th>p50</th><th>p95</th><th>p99</th><th>Responses</th><th>Health</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>100</td><td>10</td><td>412</td><td>22ms</td><td>31ms</td><td>38ms</td><td><span class="chip">200 ×100</span></td><td class="good">● healthy</td></tr>
+        <tr><td>2</td><td>1,000</td><td>25</td><td>1,105</td><td>21ms</td><td>34ms</td><td>52ms</td><td><span class="chip">200 ×1000</span></td><td class="good">● healthy</td></tr>
+        <tr><td>3</td><td>10,000</td><td>50</td><td>1,840</td><td>26ms</td><td>71ms</td><td>118ms</td><td><span class="chip">200 ×10000</span></td><td class="good">● healthy</td></tr>
+        <tr><td>4</td><td>100,000</td><td>100</td><td>1,862</td><td>48ms</td><td>190ms</td><td>310ms</td><td><span class="chip">200 ×97.6k</span><span class="chip e">503 ×1.9k</span></td><td class="bad">● degraded</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>How response times are spread (stage 4)</h2>
+  <div class="card">
+    <div class="hist" id="hist"></div>
+    <div class="muted" style="display:flex;justify-content:space-between;font-size:12px"><span>10 ms</span><span>p50 48 ms</span><span>p99 310 ms</span><span>620 ms</span></div>
+    <div class="note">Two humps = two kinds of requests (e.g. cache hit vs miss). Uses the existing, currently unused <code>/api/runs/{id}/hist</code>.</div>
+  </div>
+</section>
+
+<script>
+const phases = [
+  { k:'dns',  name:'DNS lookup',        ms:12,  why:'Turning the hostname into an IP address. Slow? Check your resolver or use an IP / local cache.' },
+  { k:'tcp',  name:'TCP connect',       ms:24,  why:'Opening a connection to the server (network round trip). Mostly distance to the server.' },
+  { k:'tls',  name:'TLS handshake',     ms:60,  why:'Agreeing on encryption. ~2 round trips; reused connections skip it entirely.' },
+  { k:'send', name:'Request sent',      ms:2,   why:'Uploading headers + body. Large only for big payloads.' },
+  { k:'wait', name:'Server processing', ms:298, why:'Time to first byte: your code, DB queries, downstream calls. This is where to optimise.', flag:true },
+  { k:'recv', name:'Content download',  ms:16,  why:'Receiving the 18.4 KB body. Large? Paginate or enable compression.' },
+];
+const total = phases.reduce((s, p) => s + p.ms, 0);
+const stack = (list) => list.map(p => `<div title="${p.name} ${p.ms}ms" style="width:${p.ms / total * 100}%;background:var(--${p.k})"></div>`).join('');
+
+document.getElementById('stack').innerHTML = stack(phases);
+document.getElementById('stack-cold').innerHTML = stack(phases);
+document.getElementById('stack-warm').innerHTML = stack(phases.map(p => ['dns','tcp','tls'].includes(p.k) ? { ...p, ms:0 } : p)) +
+  `<div style="flex:1"></div>`;
+
+let start = 0;
+document.getElementById('wf').innerHTML = phases.map(p => {
+  const row = `<div class="lbl"><span class="dot" style="background:var(--${p.k})"></span>${p.name}</div>
+    <div class="track"><div class="bar" style="left:${start / total * 100}%;width:${p.ms / total * 100}%;background:var(--${p.k})"></div></div>
+    <div class="ms ${p.flag ? 'warn' : ''}"><b>${p.ms}</b> ms</div>
+    <div class="why">${p.why}</div>`;
+  start += p.ms;
+  return row;
+}).join('');
+
+// Fake bimodal histogram.
+const bins = Array.from({ length: 48 }, (_, i) => Math.exp(-((i - 7) ** 2) / 10) * 100 + Math.exp(-((i - 26) ** 2) / 30) * 35 + 1);
+document.getElementById('hist').innerHTML = bins.map(v => `<div style="height:${v}%"></div>`).join('');
+
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('active', x === b));
+  for (const t of ['verify', 'report']) document.getElementById('t-' + t).classList.toggle('hidden', t !== b.dataset.t);
+});
+</script>
+</body>
+</html>

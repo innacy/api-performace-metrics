@@ -98,6 +98,27 @@ func TestProbeRedirects(t *testing.T) {
 	}
 }
 
+func TestProbeTiming(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(20 * time.Millisecond)
+		w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+	p := Probe(curlparse.Target{Method: "GET", URL: ts.URL, Header: http.Header{}, Insecure: true}, 2*time.Second)
+	if p.Cold == nil || p.Warm == nil {
+		t.Fatalf("want cold+warm phases, got %+v", p)
+	}
+	if p.Cold.Reused || p.Cold.TLSMs <= 0 || p.Cold.ConnectMs <= 0 {
+		t.Fatalf("cold should open a new TLS connection: %+v", *p.Cold)
+	}
+	if !p.Warm.Reused || p.Warm.TLSMs != 0 || p.Warm.ConnectMs != 0 {
+		t.Fatalf("warm should reuse the connection: %+v", *p.Warm)
+	}
+	if p.Cold.WaitMs < 20 || p.Warm.WaitMs < 20 {
+		t.Fatalf("server processing should include the 20ms sleep: cold=%v warm=%v", p.Cold.WaitMs, p.Warm.WaitMs)
+	}
+}
+
 func TestRunRedirects(t *testing.T) {
 	var finalHits, redirHits atomic.Int64
 	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
